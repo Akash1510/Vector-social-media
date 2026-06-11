@@ -38,6 +38,8 @@ export type UserSummary = {
   mutualFollowersCount?: number;
   isBlockedByCurrentUser?: boolean;
   isBlockedByTarget?: boolean;
+  role?: string;
+  isBanned?: boolean;
 };
 
 export type Post = {
