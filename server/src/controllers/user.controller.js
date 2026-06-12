@@ -735,7 +735,12 @@ export const getSuggestedUsers = asyncHandler(async (req, res) => {
 });
 
 export const searchUsers = asyncHandler(async (req, res) => {
-        const { query, cursor } = req.query;
+        const {
+    query,
+    cursor,
+    location,
+    sortBy
+} = req.query;
 
         if (!query) {
             return res.json({
@@ -759,15 +764,51 @@ export const searchUsers = asyncHandler(async (req, res) => {
             ? { _id: { $lt: new mongoose.Types.ObjectId(cursor) } }
             : {};
 
+            let searchFilter = {
+    _id: { $nin: excludeIds }
+};
+
+if (query) {
+    searchFilter.$or = [
+        {
+            username: {
+                $regex: query,
+                $options: "i"
+            }
+        },
+        {
+            name: {
+                $regex: query,
+                $options: "i"
+            }
+        },
+        {
+            bio: {
+                $regex: query,
+                $options: "i"
+            }
+        }
+    ];
+}
+
+let sortOption = { _id: -1 };
+
+if (sortBy === "followers") {
+    sortOption = { followersCount: -1 };
+}
+
+if (sortBy === "activity") {
+    sortOption = { createdAt: -1 };
+}
+
         const users = await User.find({
-            $text: { $search: query },
-            _id: { $nin: excludeIds },
-            ...cursorFilter,
-        })
-            .sort({ _id: -1 })
-            .limit(limit + 1)
-            .select("name username avatar")
-            .lean();
+    ...searchFilter,
+    ...cursorFilter,
+})
+.sort(sortOption)
+.limit(limit + 1)
+.select("name username avatar followersCount createdAt")
+.lean();
 
         const hasNextPage = users.length > limit;
         const pageUsers = hasNextPage ? users.slice(0, limit) : users;
