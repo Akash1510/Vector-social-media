@@ -34,6 +34,20 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
   const [following, setFollowing] = useState<boolean>(isFollowing ?? false);
   const [requested] = useState<boolean>(isRequested ?? false);
   const [blocked, setBlocked] = useState<boolean>(user.isBlockedByCurrentUser ?? false);
+  const completionItems = [
+  { done: !!user.avatar, points: 20, label: "Profile Picture" },
+  { done: !!user.bio, points: 15, label: "Bio" },
+  { done: !!user.description, points: 15, label: "Description" },
+  { done: postsCount > 0, points: 15, label: "First Post" },
+  { done: (user.followersCount ?? 0) > 0, points: 15, label: "First Follower" },
+  { done: (user.followingCount ?? 0) > 0, points: 20, label: "Following Users" },
+];
+
+const completionPercentage = completionItems
+  .filter(item => item.done)
+  .reduce((sum, item) => sum + item.points, 0);
+
+const incompleteItems = completionItems.filter(item => !item.done);
   
   // CHANGE 2: Added the dropdownOpen state
   const [dropdownOpen, setDropdownOpen] = useState<boolean>(false);
@@ -204,6 +218,38 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
               <span className="rounded-full border border-border bg-background/50 px-7 py-3">{user.followersCount ?? user.followers?.length ?? 0} Followers</span>
               <span className="rounded-full border border-border bg-background/50 px-7 py-3">{user.followingCount ?? user.following?.length ?? 0} Following</span>
             </div>
+
+            {isSelfProfile && (
+  <div className="mt-4 rounded-xl border border-border p-4">
+    <div className="flex justify-between mb-2">
+      <span className="font-medium">Profile Completion</span>
+      <span>{completionPercentage}%</span>
+    </div>
+
+    <div className="h-3 w-full rounded-full bg-muted overflow-hidden">
+      <div
+        className="h-full bg-blue-500 transition-all"
+        style={{ width: `${completionPercentage}%` }}
+      />
+    </div>
+
+    {incompleteItems.length > 0 && (
+      <div className="mt-3">
+        <p className="text-sm font-medium mb-2">
+          Complete these:
+        </p>
+
+        <ul className="text-sm space-y-1">
+          {incompleteItems.map(item => (
+            <li key={item.label}>
+              • Add {item.label} (+{item.points}%)
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+  </div>
+)}
 
             {/* Social proof */}
             {!isSelfProfile && (
