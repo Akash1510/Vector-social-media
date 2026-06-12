@@ -20,6 +20,10 @@ export default function CreatePostModal({ onClose, onPostCreated }: CreateModalP
     const [visible, setVisible] = useState(true);
     const [intent, setIntent] = useState("");
     const [content, setContent] = useState("");
+    const [isPoll, setIsPoll] = useState(false);
+    const [pollQuestion, setPollQuestion] = useState("");
+    const [pollOptions, setPollOptions] = useState([ "", ""]);
+    const [pollExpiresAt, setPollExpiresAt] = useState("");
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);

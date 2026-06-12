@@ -128,7 +128,7 @@ const getTopPosts = (daysAgo, maxResults) => async (req, res) => {
         $project: {
           _id: 1, content: 1, image: 1, intent: 1, likes: 1,
           commentsCount: 1, sharesCount: 1, likesCount: 1,
-          createdAt: 1, updatedAt: 1,
+          createdAt: 1, updatedAt: 1, poll: 1,
           "author._id": 1, "author.username": 1, "author.name": 1,
           "author.surname": 1, "author.avatar": 1,
         },
@@ -175,14 +175,22 @@ export const removePostById = async (postId) => {
 export const createPost = async (req, res) => {
     let imagePublicId = null;
     try {
-        const { content: rawContent, intent } = req.body;
+        const {
+  content: rawContent,
+  intent,
+  pollQuestion,
+  pollOptions,
+  pollExpiresAt
+} = req.body;
         const content = (rawContent || "").trim();
-        if (!intent || (!content && !req.file)) {
-            return res.status(400).json({
-                success: false,
-                message: "Intent and either content or image are required"
-            });
-        }
+        const hasPoll = pollQuestion && pollOptions;
+
+if (!intent || (!content && !req.file && !hasPoll)) {
+    return res.status(400).json({
+        success: false,
+        message: "Post must contain content, image, or poll"
+    });
+}
 
         const validIntents = ["ask", "build", "share", "discuss", "reflect"];
         if (!validIntents.includes(intent)) {
@@ -207,14 +215,113 @@ export const createPost = async (req, res) => {
             imagePublicId = uploadResult.public_id;
         }
 
-        const post = await Post.create({ 
-            author: req.user.id, 
-            authorIsPrivate: req.user.isPrivate || false,
-            content, 
-            intent, 
-            image, 
-            imagePublicId 
-        });
+        let poll = undefined;
+
+if (pollQuestion && pollOptions) {
+    const parsedOptions =
+  typeof pollOptions === "string"
+    ? JSON.parse(pollOptions)
+    : pollOptions;
+
+if (!Array.isArray(parsedOptions)) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll options must be an array"
+  });
+}
+
+const cleanedOptions = parsedOptions
+  .map(option => option?.trim())
+  .filter(Boolean);
+
+if (cleanedOptions.length < 2) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll requires at least 2 options"
+  });
+}
+
+if (
+  pollExpiresAt &&
+  new Date(pollExpiresAt) <= new Date()
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll expiry must be in the future"
+  });
+}
+
+poll = {
+  question: pollQuestion.trim(),
+  options: cleanedOptions.map(option => ({
+    text: option,
+    voters: []
+  })),
+  expiresAt: pollExpiresAt || null
+};
+    const parsedOptions =
+  typeof pollOptions === "string"
+    ? JSON.parse(pollOptions)
+    : pollOptions;
+
+if (!Array.isArray(parsedOptions)) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll options must be an array"
+  });
+}
+
+const cleanedOptions = parsedOptions
+  .map(option => option?.trim())
+  .filter(Boolean);
+
+if (cleanedOptions.length < 2) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll requires at least 2 options"
+  });
+}
+
+if (
+  pollExpiresAt &&
+  new Date(pollExpiresAt) <= new Date()
+) {
+  return res.status(400).json({
+    success: false,
+    message: "Poll expiry must be in the future"
+  });
+}
+  const parsedOptions =
+    typeof pollOptions === "string"
+      ? JSON.parse(pollOptions)
+      : pollOptions;
+
+  if (parsedOptions.length < 2) {
+    return res.status(400).json({
+      success: false,
+      message: "Poll must contain at least 2 options"
+    });
+  }
+
+  poll = {
+    question: pollQuestion,
+    options: parsedOptions.map(option => ({
+      text: option,
+      voters: []
+    })),
+    expiresAt: pollExpiresAt || null
+  };
+}
+
+        const post = await Post.create({
+  author: req.user.id,
+  authorIsPrivate: req.user.isPrivate || false,
+  content,
+  intent,
+  image,
+  imagePublicId,
+  poll
+});
         const populatedPost = await post.populate("author", "username name surname avatar");
         res.status(201).json({
             success: true,
@@ -944,4 +1051,101 @@ export const togglePinPost = asyncHandler(async (req, res) => {
     await post.save();
     return res.status(200).json({ success: true, isPinned: true, message: "Post pinned successfully" });
   }
+});
+
+export const votePoll = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { optionIndex } = req.body;
+  const userId = req.user.id;
+
+  const post = await Post.findById(id);
+
+  if (!post || !post.poll) {
+    return res.status(404).json({
+      success: false,
+      message: "Poll not found"
+    });
+  }
+
+  if (
+    post.poll.expiresAt &&
+    new Date() > new Date(post.poll.expiresAt)
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Poll has expired"
+    });
+  }
+
+  const alreadyVoted =
+    post.poll.options.some(option =>
+      option.voters.some(
+        voter => voter.toString() === userId
+      )
+    );
+
+  if (alreadyVoted) {
+    return res.status(400).json({
+      success: false,
+      message: "You already voted"
+    });
+  }
+
+  if (
+    optionIndex < 0 ||
+    optionIndex >= post.poll.options.length
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid option"
+    });
+  }
+
+  post.poll.options[optionIndex]
+      .voters.push(userId);
+
+  await post.save();
+
+  res.status(200).json({
+    success: true,
+    message: "Vote recorded"
+  });
+});
+
+export const getPollResults = asyncHandler(async (req, res) => {
+  const post = await Post.findById(req.params.id);
+
+  if (!post || !post.poll) {
+    return res.status(404).json({
+      success: false,
+      message: "Poll not found"
+    });
+  }
+
+  const totalVotes =
+    post.poll.options.reduce(
+      (sum, option) =>
+        sum + option.voters.length,
+      0
+    );
+
+  const results =
+    post.poll.options.map(option => ({
+      text: option.text,
+      votes: option.voters.length,
+      percentage:
+        totalVotes > 0
+          ? Math.round(
+              option.voters.length *
+              100 /
+              totalVotes
+            )
+          : 0
+    }));
+
+  res.status(200).json({
+    success: true,
+    totalVotes,
+    results
+  });
 });
