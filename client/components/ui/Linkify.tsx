@@ -24,7 +24,7 @@ const Linkify: React.FC<LinkifyProps> = ({ text }) => {
                         if (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:") {
                             isValidUrl = true;
                         }
-                    } catch (_) {
+                    } catch {
                         // Ignore parsing errors
                     }
 

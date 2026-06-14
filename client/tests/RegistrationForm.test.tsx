@@ -2,7 +2,6 @@ import { render, screen,cleanup} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach,afterEach } from "vitest";
 import RegistrationForm from "../components/forms/RegistrationForm";
-import { toast } from "react-toastify";
 import "@testing-library/jest-dom/vitest";
 
 vi.mock("axios");

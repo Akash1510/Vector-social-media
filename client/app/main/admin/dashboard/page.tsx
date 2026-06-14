@@ -32,14 +32,19 @@ export default function AdminDashboard() {
         if (userData?.role === "admin") {
             fetchFlaggedContent();
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userData]);
 
     const fetchFlaggedContent = async () => {
         try {
             const res = await axios.get(`${BACKEND_URL}/api/admin/flagged`, { withCredentials: true });
             setData(res.data.data);
-        } catch (error: any) {
-            toast.error(error.response?.data?.message || "Failed to load flagged content");
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                toast.error(error.response?.data?.message || "Failed to load flagged content");
+            } else {
+                toast.error("Failed to load flagged content");
+            }
         } finally {
             setFetching(false);
         }
@@ -53,8 +58,12 @@ export default function AdminDashboard() {
                 ...prev,
                 [type + "s"]: prev[(type + "s") as keyof FlaggedData].filter((item) => item._id !== id)
             }));
-        } catch (error: any) {
-            toast.error(error.response?.data?.message || "Failed to dismiss flag");
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                toast.error(error.response?.data?.message || "Failed to dismiss flag");
+            } else {
+                toast.error("Failed to dismiss flag");
+            }
         }
     };
 
@@ -67,8 +76,12 @@ export default function AdminDashboard() {
                 ...prev,
                 [type + "s"]: prev[(type + "s") as keyof FlaggedData].filter((item) => item._id !== id)
             }));
-        } catch (error: any) {
-            toast.error(error.response?.data?.message || "Failed to delete content");
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                toast.error(error.response?.data?.message || "Failed to delete content");
+            } else {
+                toast.error("Failed to delete content");
+            }
         }
     };
 
@@ -79,8 +92,12 @@ export default function AdminDashboard() {
             toast.success(res.data.message);
             // We do not remove the posts/comments on ban automatically in this simple view,
             // but the user's status will reflect as banned internally.
-        } catch (error: any) {
-            toast.error(error.response?.data?.message || "Failed to ban user");
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                toast.error(error.response?.data?.message || "Failed to ban user");
+            } else {
+                toast.error("Failed to ban user");
+            }
         }
     };
 
