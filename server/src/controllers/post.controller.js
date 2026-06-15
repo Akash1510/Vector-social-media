@@ -259,7 +259,7 @@ poll = {
   })),
   expiresAt: pollExpiresAt || null
 };
-    const parsedOptions =
+    const parsedOptionsForView =
   typeof pollOptions === "string"
     ? JSON.parse(pollOptions)
     : pollOptions;
@@ -271,7 +271,7 @@ if (!Array.isArray(parsedOptions)) {
   });
 }
 
-const cleanedOptions = parsedOptions
+const filteredOptions = parsedOptions
   .map(option => option?.trim())
   .filter(Boolean);
 
@@ -291,7 +291,7 @@ if (
     message: "Poll expiry must be in the future"
   });
 }
-  const parsedOptions =
+  const parsedPollOptions =
     typeof pollOptions === "string"
       ? JSON.parse(pollOptions)
       : pollOptions;
