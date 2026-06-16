@@ -132,9 +132,7 @@ const getTopPosts = (daysAgo, maxResults) => async (req, res) => {
         $project: {
           _id: 1, content: 1, image: 1, intent: 1, likes: 1,
           commentsCount: 1, sharesCount: 1, likesCount: 1,
-          createdAt: 1, updatedAt: 1, poll: 1,
-          createdAt: 1, updatedAt: 1,
-          isEdited: 1, editedAt: 1,
+          createdAt: 1, updatedAt: 1, poll: 1, isEdited: 1, editedAt: 1,
           "author._id": 1, "author.username": 1, "author.name": 1,
           "author.surname": 1, "author.avatar": 1,
         },
@@ -277,21 +275,13 @@ poll = {
   })),
   expiresAt: pollExpiresAt || null
 };
-    const parsedOptionsForView =
-  typeof pollOptions === "string"
-    ? JSON.parse(pollOptions)
-    : pollOptions;
-
+    
 if (!Array.isArray(parsedOptions)) {
   return res.status(400).json({
     success: false,
     message: "Poll options must be an array"
   });
 }
-
-const filteredOptions = parsedOptions
-  .map(option => option?.trim())
-  .filter(Boolean);
 
 if (cleanedOptions.length < 2) {
   return res.status(400).json({
@@ -309,10 +299,6 @@ if (
     message: "Poll expiry must be in the future"
   });
 }
-  const parsedPollOptions =
-    typeof pollOptions === "string"
-      ? JSON.parse(pollOptions)
-      : pollOptions;
 
   if (parsedOptions.length < 2) {
     return res.status(400).json({
