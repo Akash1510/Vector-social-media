@@ -296,6 +296,19 @@ export default function NotificationPanel({ search = "" }: Props) {
     };
   }, [userData]);
 
+  useEffect(() => {
+    if (!userData) return;
+
+    const handleNotificationsCleared = (data: { conversationId: string }) => {
+      setNotifications((prev) => prev.filter((n) => n.conversation?._id !== data.conversationId));
+    };
+
+    socket.on("notifications:cleared", handleNotificationsCleared);
+    return () => {
+      socket.off("notifications:cleared", handleNotificationsCleared);
+    };
+  }, [userData]);
+
 
 
 
@@ -494,11 +507,12 @@ export default function NotificationPanel({ search = "" }: Props) {
                   if (n.post?._id) {
                     router.push(`/main/post/${n.post._id}`);
                   } else if (n.type === "message") {
+                    if (!n.conversation) return;
                     if (senderId) {
                       void handleReplyToMessage(
                         n._id,
                         senderId,
-                        n.conversation?._id
+                        n.conversation._id
                       );
                     }
                   } else if (n.sender?.username) {
@@ -559,7 +573,7 @@ export default function NotificationPanel({ search = "" }: Props) {
                 </div>
 
                 <div className="flex items-center gap-2 ml-auto">
-                  {n.type === "message" && (
+                  {n.type === "message" && n.conversation && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -577,6 +591,9 @@ export default function NotificationPanel({ search = "" }: Props) {
                       <MessageCircle className="h-4 w-4" />
                       {messageLoading[n._id] ? "Loading..." : "Reply"}
                     </button>
+                  )}
+                  {n.type === "message" && !n.conversation && (
+                    <span className="text-xs surface-text-muted italic">Conversation deleted</span>
                   )}
 
                   {n.type === "follow_request_accepted" && senderId && (
