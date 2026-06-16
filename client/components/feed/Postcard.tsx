@@ -44,6 +44,10 @@ export default function PostCard({ post, setPost }: PostCardProps) {
     const [bookmarked, setBookmarked] = useState(post.isBookmarked ?? false);
     const [bookmarkLoading, setBookmarkLoading] = useState(false);
     const [localLikes, setLocalLikes] = useState<Post["likes"]>(post.likes);
+
+    // FIX: Track whether a like request is in-flight to prevent double clicks
+    const [likeLoading, setLikeLoading] = useState(false);
+
     type PostLike = Post["likes"][number];
     const currentUserLike =
         userData?.id
@@ -112,34 +116,39 @@ export default function PostCard({ post, setPost }: PostCardProps) {
     }
 
     const handleLike = async () => {
-        const previousLikes = localLikes;
-        try {
-            // 🚨 guard: don't proceed if user id missing
-            if (!userData?.id) {
-                toast.error("User not authenticated");
-                return;
-            }
+        // Guard: don't proceed if user id missing or a like request is already in-flight
+        if (!userData?.id) {
+            toast.error("User not authenticated");
+            return;
+        }
+        if (likeLoading) return;
 
+        setLikeLoading(true);
+
+        try {
+            // FIX: Make the API call FIRST — do not update UI before we know it succeeded
+            await axios.put(
+                `${BACKEND_URL}/api/posts/${post._id}/like`,
+                {},
+                { withCredentials: true }
+            );
+
+            // Only reach here if the request succeeded — now update UI
+            const updatedLikes = isLiked
+                ? uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id)
+                : getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id]);
+
+            // Trigger animation only on a new like (not unlike), after confirmed success
             if (!isLiked) {
                 setLikeAnimating(true);
                 setTimeout(() => setLikeAnimating(false), 300);
             }
 
-            const updatedLikes = isLiked
-                ? uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id)
-                : getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id]);
-
-            // ✅ update local state safely
             setLocalLikes(updatedLikes);
-            
+
             if (setPost) {
                 setPost(prev =>
-                    prev
-                        ? {
-                            ...prev,
-                            likes: updatedLikes,
-                        }
-                        : prev
+                    prev ? { ...prev, likes: updatedLikes } : prev
                 );
             } else {
                 setPosts(prev =>
@@ -150,26 +159,15 @@ export default function PostCard({ post, setPost }: PostCardProps) {
                     )
                 );
             }
-
-            // ✅ API call
-            await axios.put(
-                `${BACKEND_URL}/api/posts/${post._id}/like`,
-                {},
-                { withCredentials: true }
-            );
         } catch (error) {
-            // 🚨 revert optimistic update
-            setLocalLikes(previousLikes);
-            if (setPost) {
-                setPost(prev => prev ? { ...prev, likes: previousLikes } : prev);
-            } else {
-                setPosts(prev => prev.map(p => p._id === post._id ? { ...p, likes: previousLikes } : p));
-            }
+            // FIX: No UI was changed, so no rollback needed — just show the error
             if (axios.isAxiosError(error) && error.response?.status === 403) {
                 toast.error("Action blocked");
             } else {
-                toast.error("Failed to like post");
+                toast.error("Failed to like post. Please try again.");
             }
+        } finally {
+            setLikeLoading(false);
         }
     };
 
@@ -481,8 +479,17 @@ Report post </button>
                     </p>
 
                     <div className="flex flex-col text-center sm:flex-row gap-1 items-center md:w-[20%] justify-center">
-                        <button onClick={(e) => { e.stopPropagation(); handleLike() }} className="p-0 hover:text-blue-500">
-                            <Heart className={`h-4.5 md:h-5 cursor-pointer transition-transform duration-300 hover:text-blue-500 ${isLiked ? "text-blue-500" : ""} ${likeAnimating ? "scale-135" : "scale-100"}`} fill={isLiked ? "currentColor" : "none"} />
+                        <button
+                            onClick={(e) => { e.stopPropagation(); handleLike(); }}
+                            // FIX: Disable button while request is in-flight to prevent double-clicks
+                            disabled={likeLoading}
+                            className={`p-0 hover:text-blue-500 transition-colors duration-200 ${likeLoading ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                            aria-label={isLiked ? "Unlike post" : "Like post"}
+                        >
+                            <Heart
+                                className={`h-4.5 md:h-5 transition-transform duration-300 hover:text-blue-500 ${isLiked ? "text-blue-500" : ""} ${likeAnimating ? "scale-135" : "scale-100"}`}
+                                fill={isLiked ? "currentColor" : "none"}
+                            />
                         </button>
                         <button onClick={(e) => { e.stopPropagation(); setShowLikesModal(true) }} className="cursor-pointer text-sm hover:text-blue-500">
                             {likeCount} {likeCount === 1 ? 'Like' : 'Likes'}
