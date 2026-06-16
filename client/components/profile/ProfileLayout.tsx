@@ -32,7 +32,7 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
   const tabs = isSelfProfile ? ["posts", "followers", "following", "saved"] : ["posts", "followers", "following"];
   const [postsCount, setPostsCount] = useState<number>(0);
   const [following, setFollowing] = useState<boolean>(isFollowing ?? false);
-  const [requested] = useState<boolean>(isRequested ?? false);
+  const [requested, setRequested] = useState<boolean>(isRequested ?? false);
   const [blocked, setBlocked] = useState<boolean>(user.isBlockedByCurrentUser ?? false);
   
   // CHANGE 2: Added the dropdownOpen state
@@ -125,6 +125,7 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
                         isRequested={requested}
                         onFollowChange={(next) => {
                           setFollowing(next);
+                          if (!next) setRequested(false);
                           setUserData(prev => prev ? {
                             ...prev,
                             following: next
