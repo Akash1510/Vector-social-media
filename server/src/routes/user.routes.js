@@ -1,5 +1,5 @@
 import express from "express";
-import authMiddleware, { optionalAuth } from "../middlewares/auth.middleware.js";
+import authMiddleware from "../middlewares/auth.middleware.js";
 import { uploadImage } from "../middlewares/upload.middleware.js";
 import { getAllUsers, getFollowers, getFollowing, getUserProfile, searchUsers, toggleFollowUser, updateProfile, uploadAvatar, getSuggestedUsers, getFollowRequests, acceptFollowRequest, rejectFollowRequest, getSentFollowRequests, blockUser, unblockUser, getUserAnalytics } from "../controllers/user.controller.js";
 import { followActionLimiter, searchLimiter, socialActionLimiter } from "../middlewares/rateLimit.middleware.js";
