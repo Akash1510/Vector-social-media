@@ -37,9 +37,19 @@ authRouter.get("/me", authMiddleware, getMe);
 authRouter.post("/login", authLimiter, login);
 authRouter.post("/logout", logout);
 authRouter.post("/forgot-password", authLimiter, forgotPassword);
-authRouter.post("/reset-password", authLimiter, resetPassword);
+const resetPasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  skip: () => process.env.NODE_ENV === "test",
+  keyGenerator: (req) => req.body?.resetToken || req.ip,
+  message: { success: false, message: "Too many attempts. Try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+authRouter.post("/reset-password", resetPasswordLimiter, resetPassword);
 
 //google auth
-authRouter.post("/google", googleAuth);
+authRouter.post("/google", registerLimiter, googleAuth);
 
 export default authRouter;

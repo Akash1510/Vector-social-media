@@ -18,8 +18,19 @@ const commentSchema = new mongoose.Schema(
       trim: true,
       maxlength: 500,
     },
+    isFlaggedForReview: {
+      type: Boolean,
+      default: false,
+    },
+    parentCommentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Comment",
+      default: null,
+    },
   },
   { timestamps: true }
 );
+
+commentSchema.index({ post: 1, _id: -1 });
 
 export default mongoose.model("Comment", commentSchema);

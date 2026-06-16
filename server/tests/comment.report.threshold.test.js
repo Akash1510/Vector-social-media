@@ -86,32 +86,32 @@ describe("createCommentReport - auto-removal threshold", () => {
         .send({ commentId: comment._id.toString(), reason: "spam" });
 
       expect(res.status).toBe(201);
-      expect(res.body.removed).toBe(false);
+      expect(res.body.flagged).toBe(false);
     }
 
     // The comment still exists
     const stillExists = await Comment.findById(comment._id);
     expect(stillExists).not.toBeNull();
 
-    // Submit the threshold-crossing report
     const finalRes = await request(app)
       .post("/api/reports/comments")
       .set("Cookie", reporterCookies[REPORT_THRESHOLD - 1])
       .send({ commentId: comment._id.toString(), reason: "spam" });
 
     expect(finalRes.status).toBe(200);
-    expect(finalRes.body.removed).toBe(true);
+    expect(finalRes.body.flagged).toBe(true);
 
-    // Comment should be deleted
-    const deletedComment = await Comment.findById(comment._id);
-    expect(deletedComment).toBeNull();
+    // Comment should be flagged, not deleted
+    const flaggedComment = await Comment.findById(comment._id);
+    expect(flaggedComment).not.toBeNull();
+    expect(flaggedComment.isFlaggedForReview).toBe(true);
 
-    // Reports should be cleaned up
+    // Reports should NOT be cleaned up
     const remainingReports = await Report.countDocuments({
       targetType: "comment",
       targetId: comment._id,
     });
-    expect(remainingReports).toBe(0);
+    expect(remainingReports).toBe(REPORT_THRESHOLD);
 
     // commentsCount on the parent post should be decremented
     const updatedPost = await Post.findById(post._id);

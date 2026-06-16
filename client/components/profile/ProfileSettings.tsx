@@ -3,14 +3,26 @@
 import { useAppContext } from "@/context/AppContext";
 import Image from "next/image";
 import axios from "axios";
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useState, useRef } from "react";
 import { toast } from "react-toastify";
 import type { ProfileFormData } from "@/lib/types";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
+
+type EditableMap = {
+  username: boolean;
+  name: boolean;
+  surname: boolean;
+  phoneNumber: boolean;
+  bio: boolean;
+  description: boolean;
+};
 
 type EditableFieldProps = {
   label: string;
   name: keyof ProfileFormData;
   value: string;
+  editable: boolean;
+  onEdit: () => void;
   onChange: (
     e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => void;
@@ -22,24 +34,47 @@ export default function ProfileSettings() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-
   const [initialData, setInitialData] =
     useState<ProfileFormData | null>(null);
-
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatar, setAvatar] = useState<string | null>(null);
   const [formData, setFormData] =
     useState<ProfileFormData | null>(null);
-
-  const [selectedFile, setSelectedFile] =
-    useState<File | null>(null);
-
-  const [preview, setPreview] =
-    useState<string | null>(null);
-
-  const [avatar, setAvatar] =
-    useState<string | null>(null);
+  const [editable, setEditable] = useState<EditableMap>({
+    username: false,
+    name: false,
+    surname: false,
+    phoneNumber: false,
+    bio: false,
+    description: false,
+  });
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL!;
+
+  // --- FIX: Focus trap for the settings panel ---
+  const focusTrapRef = useFocusTrap(true);
+
+  // --- FIX: Close on Esc key ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Reset editable fields on Esc — mirrors clicking Cancel
+        setEditable({
+          username: false,
+          name: false,
+          surname: false,
+          phoneNumber: false,
+          bio: false,
+          description: false,
+        });
+        if (initialData) setFormData(initialData);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [initialData]);
 
   useEffect(() => {
     if (userData) {
@@ -52,23 +87,19 @@ export default function ProfileSettings() {
         description: userData.description || "",
         isPrivate: userData.isPrivate || false,
       };
-
       setFormData(data);
       setInitialData(data);
       setAvatar(userData.avatar || null);
     }
   }, [userData]);
 
-  const isFormChanged =
-    JSON.stringify(formData) !== JSON.stringify(initialData);
+  const isFormChanged = JSON.stringify(formData) !== JSON.stringify(initialData);
 
   if (!formData) {
     return null;
   }
 
-  const handleAvatarChange = (
-    e: ChangeEvent<HTMLInputElement>
-  ) => {
+  const handleAvatarChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -86,29 +117,17 @@ export default function ProfileSettings() {
       setUploadingAvatar(true);
 
       const res = await axios.post(
-        `${BACKEND_URL}/api/users/avatar`,
+        BACKEND_URL + "/api/users/avatar",
         data,
         { withCredentials: true }
       );
 
       if (res.data.success) {
         setAvatar(res.data.avatar);
-
-        setUserData((prev) =>
-          prev
-            ? {
-                ...prev,
-                avatar: res.data.avatar,
-              }
-            : prev
-        );
+        setUserData(prev => prev ? { ...prev, avatar: res.data.avatar } : prev);
 
         setSelectedFile(null);
         setPreview(null);
-
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
 
         toast.success("Profile picture updated");
       }
@@ -119,283 +138,247 @@ export default function ProfileSettings() {
     }
   };
 
-  const handleChange = (
-    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  ) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const toggleEdit = (field: keyof EditableMap) => {
+    setEditable(prev => ({ ...prev, [field]: true }));
   };
 
   const handleSave = async () => {
+    // ── Username ─────────────────────────────────────────────────────────────
+    const trimmedUsername = formData.username.trim();
+    if (!trimmedUsername) {
+      return toast.warn("Username cannot be empty.");
+    }
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 30) {
+      return toast.warn("Username must be between 3 and 30 characters.");
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(trimmedUsername)) {
+      return toast.warn(
+        "Username can only contain letters, numbers, underscores, and hyphens."
+      );
+    }
+
+    // ── First name ───────────────────────────────────────────────────────────
+    const trimmedName = formData.name.trim();
+    if (!trimmedName) {
+      return toast.warn("First name cannot be empty.");
+    }
+    if (trimmedName.length < 2 || trimmedName.length > 100) {
+      return toast.warn("First name must be between 2 and 100 characters.");
+    }
+
+    // ── Last name ────────────────────────────────────────────────────────────
+    if (formData.surname.length > 100) {
+      return toast.warn("Last name must not exceed 100 characters.");
+    }
+
+    // ── Phone number ─────────────────────────────────────────────────────────
+    const trimmedPhone = formData.phoneNumber.trim();
+    if (!trimmedPhone) {
+      return toast.warn("Phone number cannot be empty.");
+    }
+    const cleanedPhone = trimmedPhone.replace(/[\s-]/g, "");
+    if (!/^\d{10}$/.test(cleanedPhone)) {
+      return toast.warn("Please enter a valid 10-digit phone number.");
+    }
+
+    // ── Bio ──────────────────────────────────────────────────────────────────
+    const trimmedBio = formData.bio.trim();
+    if (!trimmedBio) {
+      return toast.warn("Bio cannot be empty.");
+    }
+    if (formData.bio.length > 30) {
+      return toast.warn("Bio must not exceed 30 characters.");
+    }
+
+    // ── Description ──────────────────────────────────────────────────────────
+    const trimmedDescription = formData.description.trim();
+    if (!trimmedDescription) {
+      return toast.warn("Description cannot be empty.");
+    }
+    if (formData.description.length > 200) {
+      return toast.warn("Description must not exceed 200 characters.");
+    }
+
     try {
       setLoading(true);
-
-      const { data } = await axios.put(
-        `${BACKEND_URL}/api/users/update-profile`,
-        formData,
-        { withCredentials: true }
-      );
-
+      const { data } = await axios.put(BACKEND_URL + "/api/users/update-profile", formData, { withCredentials: true });
       if (data.success) {
         setUserData(data.user);
         setInitialData(formData);
-
-        toast.success(data.message);
-
-      } else {
-        toast.warn(data.message);
+        toast.success(data.message)
+        setEditable({
+          username: false,
+          name: false,
+          surname: false,
+          phoneNumber: false,
+          bio: false,
+          description: false,
+        });
       }
     } catch (err) {
       console.error(err);
-      toast.error("Failed to update profile");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAvatarDiscard = () => {
-    setSelectedFile(null);
-    setPreview(null);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const handleCancel = () => {
-    setFormData(initialData);
-    handleAvatarDiscard();
-  };
-
   return (
-    <div className="page-scroll px-4 py-5 sm:px-7 lg:px-8">
-      <div className="mx-auto max-w-5xl">
-        <h1 className="mb-4 text-center text-2xl font-bold tracking-tight text-foreground sm:text-left md:text-3xl">
-          Edit Profile
-        </h1>
+    // --- FIX: role="dialog", aria-modal, aria-labelledby, focusTrapRef attached ---
+    <div
+      ref={focusTrapRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="profile-settings-title"
+      className="h-screen px-20 py-5 overflow-y-auto"
+    >
+      <h1 id="profile-settings-title" className="text-2xl font-semibold mb-6">Edit Profile</h1>
 
-        <div className="overflow-hidden rounded-3xl border border-border/60 bg-background/40 backdrop-blur-sm">
-          {/* Subtle banner */}
-          <div className="h-24 bg-linear-to-r from-blue-500/10 via-violet-500/10 to-cyan-500/10 sm:h-28" />
-
-          <div className="px-5 pb-6 sm:px-7 md:px-8">
-            {/* Avatar Section */}
-            <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-end">
-              <div className="relative -mt-12 sm:-mt-14">
-                <div className="h-24 w-24 overflow-hidden rounded-full border-4 border-background shadow-lg md:h-28 md:w-28">
-                  <img
-                    alt="Profile preview"
-                    src={
-                      preview ||
-                      avatar ||
-                      "/avatar-placeholder.png"
-                    }
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-3 sm:justify-start">
-                <button
-                  type="button"
-                  onClick={() =>
-                    fileInputRef.current?.click()
-                  }
-                  className="cursor-pointer text-sm font-semibold text-primary transition hover:opacity-80"
-                >
-                  Change photo
-                </button>
-
-                {selectedFile && (
-                  <>
-                    <button
-                      type="button"
-                      disabled={uploadingAvatar}
-                      onClick={handleAvatarUpload}
-                      className="h-10 cursor-pointer rounded-xl bg-blue-500 px-5 text-sm font-medium text-white transition-all duration-200 hover:bg-blue-600 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      {uploadingAvatar
-                        ? "Uploading..."
-                        : "Set as profile pic"}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleAvatarDiscard}
-                      className="h-10 cursor-pointer rounded-xl border border-border bg-background/60 px-5 text-sm font-medium text-foreground transition-all duration-200 hover:bg-accent hover:shadow-sm active:scale-[0.98]"
-                    >
-                      Discard
-                    </button>
-                  </>
-                )}
-              </div>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarChange}
-              />
-            </div>
-
-            {/* Form Fields */}
-            <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-6 text-foreground md:grid-cols-2">
-              <EditableInput
-                label="Username"
-                name="username"
-                value={formData.username}
-                onChange={handleChange}
-              />
-
-              <EditableInput
-                label="First name"
-                name="name"
-                value={formData.name}
-                onChange={handleChange}
-              />
-
-              <EditableInput
-                label="Last name"
-                name="surname"
-                value={formData.surname}
-                onChange={handleChange}
-              />
-
-              <EditableInput
-                label="Phone number"
-                name="phoneNumber"
-                value={formData.phoneNumber}
-                onChange={handleChange}
-              />
-
-              <EditableTextarea
-                label="Bio"
-                name="bio"
-                value={formData.bio}
-                onChange={handleChange}
-              />
-
-              <EditableTextarea
-                label="Description"
-                name="description"
-                value={formData.description}
-                onChange={handleChange}
-              />
-
-              {/* Private Account */}
-              <div className="md:col-span-2">
-                <div
-                  className="flex cursor-pointer items-start gap-3 rounded-2xl border border-border/50 bg-background/30 p-4 transition-colors duration-200 hover:bg-accent/30"
-                  onClick={() =>
-                    setFormData((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            isPrivate: !prev.isPrivate,
-                          }
-                        : prev
-                    )
-                  }
-                >
-                  <input
-                    type="checkbox"
-                    checked={formData.isPrivate}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        isPrivate: e.target.checked,
-                      })
-                    }
-                    className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-
-                  <div className="flex flex-col">
-                    <p className="font-medium text-foreground">
-                      Private Account
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      Only your followers will see your posts and
-                      lists.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="mt-8 flex flex-wrap justify-end gap-3">
-              <button
-                onClick={handleCancel}
-                className="w-40 cursor-pointer rounded-xl border border-border bg-background/60 py-2.5 text-sm font-medium text-foreground transition-all duration-200 hover:bg-accent hover:shadow-sm active:scale-[0.98]"
-              >
-                Cancel
-              </button>
-
-              <button
-                disabled={loading || !isFormChanged}
-                onClick={handleSave}
-                className={`w-40 rounded-xl py-2.5 text-sm font-medium text-white transition-all duration-200 active:scale-[0.98] ${
-                  loading || !isFormChanged
-                    ? "cursor-not-allowed bg-blue-400"
-                    : "cursor-pointer bg-blue-600 hover:bg-blue-700 hover:shadow-sm"
-                }`}
-              >
-                {loading ? "Saving..." : "Save changes"}
-              </button>
-            </div>
-          </div>
+      <div className="flex items-center gap-6 mb-6">
+        <div className="h-24 w-24 rounded-full overflow-hidden border">
+          <Image alt="Profile preview" src={preview || avatar || "/avatar-placeholder.png"} width={96} height={96} unoptimized={!!preview} className="h-full w-full object-cover" />
         </div>
+
+        <button type="button" onClick={() => fileInputRef.current?.click()} className="text-blue-600 font-medium cursor-pointer">
+          Change photo
+        </button>
+
+        <button type="button" disabled={!selectedFile || uploadingAvatar} onClick={handleAvatarUpload} className={`px-4 py-1.5 rounded-md text-white transition ${!selectedFile || uploadingAvatar ? "bg-blue-300 cursor-not-allowed" : "bg-blue-500 hover:bg-blue-600 cursor-pointer"}`}>
+          {uploadingAvatar ? "Uploading..." : "Set as profile pic"}
+        </button>
+
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+      </div>
+
+      {/* Fields */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-5">
+        <EditableInput
+          label="Username"
+          name="username"
+          value={formData.username}
+          editable={editable.username}
+          onEdit={() => toggleEdit("username")}
+          onChange={handleChange}
+        />
+
+        <EditableInput
+          label="First name"
+          name="name"
+          value={formData.name}
+          editable={editable.name}
+          onEdit={() => toggleEdit("name")}
+          onChange={handleChange}
+        />
+
+        <EditableInput
+          label="Last name"
+          name="surname"
+          value={formData.surname}
+          editable={editable.surname}
+          onEdit={() => toggleEdit("surname")}
+          onChange={handleChange}
+        />
+
+        <EditableInput
+          label="Phone number"
+          name="phoneNumber"
+          value={formData.phoneNumber}
+          editable={editable.phoneNumber}
+          onEdit={() => toggleEdit("phoneNumber")}
+          onChange={handleChange}
+        />
+
+        <EditableTextarea
+          label="Bio"
+          name="bio"
+          value={formData.bio}
+          editable={editable.bio}
+          onEdit={() => toggleEdit("bio")}
+          onChange={handleChange}
+        />
+
+        <EditableTextarea
+          label="Description"
+          name="description"
+          value={formData.description}
+          editable={editable.description}
+          onEdit={() => toggleEdit("description")}
+          onChange={handleChange}
+        />
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-end gap-4 mt-7">
+        <button className="w-40 py-2 border cursor-pointer rounded-lg">Cancel</button>
+        <button disabled={loading || !isFormChanged} onClick={handleSave} className={`w-40 py-2 text-white rounded-lg ${isFormChanged ? 'bg-blue-600 cursor-pointer' : 'cursor-not-allowed bg-blue-400'} ${loading ? 'cursor-not-allowed bg-blue-400' : ''}`}>
+          {loading ? 'Saving..' : 'Save changes'}
+        </button>
       </div>
     </div>
   );
 }
+
+/* ---------- Reusable Inputs ---------- */
 
 function EditableInput({
   label,
   name,
   value,
+  editable,
+  onEdit,
   onChange,
 }: EditableFieldProps) {
   return (
     <div>
-      <div className="mb-1.5">
-        <label className="text-sm font-medium text-foreground">
-          {label}
-        </label>
+      <div className="flex justify-between mb-1">
+        <label className="font-medium">{label}</label>
+        {!editable && (
+          <button onClick={onEdit} className="text-blue-600 text-sm cursor-pointer">
+            Edit
+          </button>
+        )}
       </div>
-
       <input
         name={name}
         value={value}
+        disabled={!editable}
         onChange={onChange}
-        className="settings-field"
+        className={`w-full px-3 py-2 rounded-lg border ${editable ? "border-blue-500" : "bg-gray-100 cursor-not-allowed"
+          }`}
       />
     </div>
   );
 }
+
 function EditableTextarea({
   label,
   name,
   value,
+  editable,
+  onEdit,
   onChange,
 }: EditableFieldProps) {
   return (
     <div className="md:col-span-2">
-      <div className="mb-1.5">
-        <label className="text-sm font-medium text-foreground">
-          {label}
-        </label>
+      <div className="flex justify-between mb-1">
+        <label className="font-medium">{label}</label>
+        {!editable && (
+          <button onClick={onEdit} className="text-blue-600 text-sm cursor-pointer">
+            Edit
+          </button>
+        )}
       </div>
-
       <textarea
         name={name}
         value={value}
+        disabled={!editable}
         onChange={onChange}
         rows={3}
-        className="settings-field resize-none"
+        className={`w-full px-3 py-2 rounded-lg border ${editable ? "border-blue-500" : "bg-gray-100 cursor-not-allowed"
+          }`}
       />
     </div>
   );

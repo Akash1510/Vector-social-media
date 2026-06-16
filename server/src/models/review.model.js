@@ -7,6 +7,11 @@ const reviewSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    target: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     stars: {
       type: Number,
       required: true,
@@ -21,5 +26,7 @@ const reviewSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+
+reviewSchema.index({ author: 1, target: 1 }, { unique: true });
 
 export default mongoose.model("Review", reviewSchema);

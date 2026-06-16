@@ -28,28 +28,27 @@ describe("sendMessageSchema validator", () => {
     expect(result.error.issues[0].message).toBe("Message must be between 1 and 2000 characters");
   });
 
-  test("rejects a whitespace-only content string", () => {
+  test("accepts a whitespace-only content string (validated in controller)", () => {
     const result = sendMessageSchema.safeParse({
       ...validPayload,
       content: "   \t\n   ",
     });
-    expect(result.success).toBe(false);
-    expect(result.error.issues[0].message).toBe("Message content cannot be empty");
+    expect(result.success).toBe(true);
   });
 
-  test("rejects when content is an empty string", () => {
+  test("accepts when content is an empty string (validated in controller)", () => {
     const result = sendMessageSchema.safeParse({
       ...validPayload,
       content: "",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  test("rejects when content is missing entirely", () => {
+  test("accepts when content is missing entirely (validated in controller)", () => {
     const withoutContent = { ...validPayload };
     delete withoutContent.content;
     const result = sendMessageSchema.safeParse(withoutContent);
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   test("rejects when conversationId is missing", () => {

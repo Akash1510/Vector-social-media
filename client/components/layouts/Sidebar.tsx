@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback, ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { Home, Search, Bell, User, Plus, Menu, X, Settings, LogOut, Send, LifeBuoy } from "lucide-react";
+import { Home, Search, Bell, User, Plus, Menu, X, Settings, LogOut, Send, LifeBuoy, Star } from "lucide-react";
 import CreateModal from "../modals/CreatePostModal";
 import { toast } from "react-toastify";
+import { getErrorMessage } from "@/lib/error";
 import axios from "axios";
 import { useAppContext } from "@/context/AppContext";
 import LogoutWarning from "../modals/LogoutWarning";
@@ -40,17 +41,15 @@ export default function Sidebar() {
     try {
       const { data } = await axios.post(BACKEND_URL + "/api/auth/logout", {}, { withCredentials: true });
       if (data.success) {
-        toast.success("Logged out successfully!");
+        socket.disconnect();
         setIsLoggedIn(false);
         setUserData(null);
+        setPosts([]);
+        toast.success("Logged out successfully!");
         router.replace("/auth/login");
       }
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        toast.error(error.message);
-      } else {
-        toast.error("Something went wrong");
-      }
+      toast.error(getErrorMessage(error));
     }
   };
 
@@ -68,15 +67,11 @@ export default function Sidebar() {
 
   const fetchUnreadMessageCount = useCallback(async () => {
     try {
-      const response = await axios.get<
-        { unreadCount: number }[]
-      >(`${BACKEND_URL}/api/conversation`, 
-        { withCredentials: true, });
-      const conversations = Array.isArray(response.data) ? response.data : [];
-      const unreadMessages = conversations.filter(
-        (conversation) => (conversation.unreadCount ?? 0) > 0
-      ).length;
-      setUnreadMessageCount(unreadMessages);
+      const { data } = await axios.get<{ unreadCount: number }>(
+        `${BACKEND_URL}/api/conversation/unread-count`,
+        { withCredentials: true }
+      );
+      setUnreadMessageCount(data.unreadCount ?? 0);
     } catch (error) {
       console.error("Failed to fetch unread message count:", error);
     }
@@ -161,7 +156,7 @@ export default function Sidebar() {
 
             <div className="flex flex-col ml-3">
               <p className="font-semibold text-[1.1rem]">Hello</p>
-              <p className="text-slate-600 dark:text-gray-300">{userData?.name}!</p>
+              <p className="text-slate-600 dark:text-gray-300">{userData?.name || "User"}!</p>
             </div>
           </div>
         </div>
@@ -207,8 +202,8 @@ export default function Sidebar() {
           <SidebarItem
             icon={<User className="h-5 md:h-7" />}
             label="Profile"
-            href={`/main/user/${userData?.username}`}
-            active={pathname === `/main/user/${userData?.username}`}
+            href={userData?.username ? `/main/user/${userData.username}` : "#"}
+            active={userData?.username ? pathname === `/main/user/${userData.username}` : false}
           />
 
           <SidebarItem
@@ -218,6 +213,13 @@ export default function Sidebar() {
             active={pathname === "/main/settings"}
           />
 
+         <SidebarItem
+            icon={<Star className='h-5 md:h-7'/>}
+            label="Reviews"
+            href="/main/reviews"
+            active={pathname === "/main/reviews"}
+          />
+          
           <SidebarItem
             icon={<LifeBuoy className="h-5 md:h-7" />}
             label="Support"

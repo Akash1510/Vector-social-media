@@ -18,6 +18,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-toastify";
 import InlineLoader from "@/components/loaders/InlineLoader";
 import type { Intent } from "@/lib/types";
+import { getErrorMessage } from "@/lib/error";
+import SearchBar from "@/components/SearchBar";
 
 type User = {
   _id: string;
@@ -91,6 +93,7 @@ export default function Explore() {
   const [open, setOpen] = useState(false);
   const [suggestedUsers, setSuggestedUsers] = useState<SuggestedUser[]>([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [showAllSuggestions, setShowAllSuggestions] = useState(false);
   const [followingState, setFollowingState] = useState<Record<string, "follow" | "requested" | "following">>({});
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -142,14 +145,7 @@ export default function Explore() {
 
         setTopPosts(data.posts || []);
       } catch (error: unknown) {
-        if (axios.isAxiosError(error)) {
-          toast.error(
-            error.response?.data?.message ||
-            "Failed to load explore data"
-          );
-        } else {
-          toast.error("Failed to load explore data");
-        }
+        toast.error(getErrorMessage(error, "Failed to load explore data"));
       } finally {
         setLoading(false);
       }
@@ -209,10 +205,7 @@ export default function Explore() {
         };
       });
     } catch (error: unknown) {
-      const message = axios.isAxiosError(error)
-        ? error.response?.data?.message || "Failed to update follow status"
-        : "Failed to update follow status";
-      toast.error(message);
+      toast.error(getErrorMessage(error, "Failed to update follow status"));
     }
   };
 
@@ -270,6 +263,10 @@ export default function Explore() {
       document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const displayedUsers = showAllSuggestions
+  ? suggestedUsers
+  : suggestedUsers.slice(0, 4);
+
   return (
     <div className="w-full min-w-0 overflow-x-hidden py-5 px-4 sm:px-7">
       <div className="space-y-8">
@@ -293,19 +290,13 @@ export default function Explore() {
               Search
             </h2>
             <div className="relative min-w-0" ref={wrapperRef}>
-                <div className="search-pill flex min-h-11 items-center gap-2 px-3 py-1">
-                  <Search
-                    className="h-5 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <input
-                    type="text"
-                    placeholder="Search users and posts"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    className="min-h-10 min-w-0 flex-1 bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground"
-                  />
-                </div>
+                <SearchBar
+                  placeholder="Search users and posts"
+                  value={query}
+                  onChange={setQuery}
+                  className="flex min-h-11 items-center gap-2 px-3 py-1"
+                  inputClassName="min-h-10 min-w-0 flex-1 py-2 text-sm outline-none"
+                />
 
                 {open && (
                   <div className="absolute z-50 mt-2 max-h-75 w-full min-w-0 max-w-full overflow-y-auto rounded-xl border border-border bg-card shadow-lg">
@@ -422,8 +413,11 @@ export default function Explore() {
                 <p className="text-sm text-muted-foreground">No suggestions right now</p>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {suggestedUsers.map((user) => {
+                  {displayedUsers.map((user) => {
                     const state = followingState[user._id] ?? "follow";
+
+                    
+
                     return (
                       <div
                         key={user._id}
@@ -492,6 +486,15 @@ export default function Explore() {
                   })}
                 </div>
               )}
+              {suggestedUsers.length > 4 && !showAllSuggestions && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllSuggestions(true)}
+                  className="w-full rounded-lg border border-border py-2 text-sm font-medium hover:bg-accent/50"
+                >
+                  Show More
+                </button>
+              )}
             </section>
 
             <section
@@ -543,7 +546,7 @@ export default function Explore() {
                   {topicCards.map((topic) => (
                     <div
                       key={topic.intent}
-                      className={`${exploreGridCard} relative min-h-[10rem] overflow-hidden`}
+                      className={`${exploreGridCard} relative min-h-40 overflow-hidden`}
                     >
                       <p className="absolute bottom-0 left-0 z-20 flex w-full items-center justify-between bg-black/40 p-2 text-sm text-white">
                         <span className="flex min-w-0 items-center gap-2">
@@ -557,7 +560,7 @@ export default function Explore() {
                         alt={topic.label}
                         width={400}
                         height={240}
-                        className="h-full min-h-[10rem] w-full object-cover"
+                        className="h-full min-h-40 w-full object-cover"
                       />
                     </div>
                   ))}

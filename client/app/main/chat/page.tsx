@@ -9,7 +9,9 @@ import { ArrowRight, Search, Trash2 } from "lucide-react";
 import ConfirmModal from "@/components/modals/DeleteWarning";
 import { toast } from "react-toastify";
 import SkeletonLoader from "@/components/loaders/SkeletonLoader";
+import { socket } from "@/socket/socket";
 import type { Conversation, UserSummary } from "@/lib/types";
+import SearchBar from "@/components/SearchBar";
 
 export default function ChatListPage() {
     const { userData } = useAppContext();
@@ -57,6 +59,22 @@ export default function ChatListPage() {
 
         if (userData?.id) void fetchConversations();
     }, [BACKEND_URL, userData]);
+
+    useEffect(() => {
+        if (!userData?.id) return;
+        const handleConversationDeleted = (data: { conversationId: string }) => {
+            setConversations((prev) => prev.filter((c) => c._id !== data.conversationId));
+            setUnreadCounts((prev) => {
+                const next = { ...prev };
+                delete next[data.conversationId];
+                return next;
+            });
+        };
+        socket.on("conversation:deleted", handleConversationDeleted);
+        return () => {
+            socket.off("conversation:deleted", handleConversationDeleted);
+        };
+    }, [userData?.id]);
 
     useEffect(() => {
         const filtered = conversations.filter((convo) => {
@@ -176,16 +194,13 @@ export default function ChatListPage() {
                         </p>
                     </div>
 
-                    <div className="relative mb-6">
-                        <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
-                        <input
-                            type="text"
-                            placeholder="Search chats..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="chat-search-input pl-11"
-                        />
-                    </div>
+                    <SearchBar
+                        placeholder="Search chats..."
+                        value={searchTerm}
+                        onChange={setSearchTerm}
+                        className="relative mb-6"
+                        inputClassName="chat-search-input pl-11"
+                    />
 
                 <div className="flex flex-col gap-3">
                     {loading ? (
@@ -228,7 +243,9 @@ export default function ChatListPage() {
                                         </div>
                                         <div className="flex justify-between items-center">
                                             <p className="surface-text-muted truncate pr-2 text-sm">
-                                                {convo.lastMessage?.content || `@${otherUser?.username}`}
+                                                {(convo.lastMessage?.isDeleted
+                                                    ? "Message deleted"
+                                                    : convo.lastMessage?.content) || `@${otherUser?.username}`}
                                             </p>
                                             {unreadCounts[convo._id] > 0 && (
                                                 <div className="flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground shadow-sm">

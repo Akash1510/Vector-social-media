@@ -1,9 +1,12 @@
 import { jest } from "@jest/globals";
 
+export const mockEmit = jest.fn();
+export const mockTo = jest.fn().mockReturnValue({ emit: mockEmit });
+
 jest.unstable_mockModule("../src/socket/socket.js", () => ({
   getIO: () => ({
-    to: () => ({ emit: () => {} }),
-    emit: () => {},
+    to: mockTo,
+    emit: jest.fn(),
   }),
 }));
 
@@ -68,7 +71,36 @@ describe("DELETE /api/conversations/:id - Soft Delete", () => {
     });
   });
 
+  it("does not leak soft-deleted message content through the conversation lastMessage preview", async () => {
+    const deleted = await Message.create({
+      conversation: conversationId,
+      sender: userA._id,
+      content: "This should not appear",
+    });
+
+    const delRes = await request(app)
+      .delete(`/api/messages/${deleted._id}`)
+      .set("Cookie", cookieA);
+
+    expect(delRes.status).toBe(200);
+
+    const listRes = await request(app)
+      .get("/api/conversation")
+      .set("Cookie", cookieA);
+
+    expect(listRes.status).toBe(200);
+
+    const convo = listRes.body.find((c) => c._id === conversationId);
+    expect(convo).toBeDefined();
+    expect(convo.lastMessage).not.toBeNull();
+    expect(convo.lastMessage.content).toBe("Hello");
+    expect(convo.lastMessage.isDeleted).toBe(false);
+  });
+
   it("hides the conversation from the deleting user but preserves it for the other participant", async () => {
+    mockEmit.mockClear();
+    mockTo.mockClear();
+
     const resA = await request(app)
       .delete(`/api/conversation/${conversationId}`)
       .set("Cookie", cookieA);
@@ -81,9 +113,19 @@ describe("DELETE /api/conversations/:id - Soft Delete", () => {
 
     const messages = await Message.find({ conversation: conversationId });
     expect(messages.length).toBeGreaterThan(0);
+
+    // Verify it sent participant_deleted to the other participant
+    expect(mockTo).toHaveBeenCalledWith(userB._id.toString());
+    const call = mockEmit.mock.calls.find(call => call[0] === "conversation:participant_deleted");
+    expect(call).toBeDefined();
+    expect(call[1].conversationId.toString()).toBe(conversationId);
+    expect(call[1].deletedBy.toString()).toBe(userA._id.toString());
   });
 
-  it("physically deletes the conversation and messages only when all participants have deleted", async () => {
+  it("does not hard-delete when all participants have soft-deleted — preserves conversation for future GC", async () => {
+    mockEmit.mockClear();
+    mockTo.mockClear();
+
     await request(app)
       .delete(`/api/conversation/${conversationId}`)
       .set("Cookie", cookieA);
@@ -93,9 +135,20 @@ describe("DELETE /api/conversations/:id - Soft Delete", () => {
       .set("Cookie", cookieB);
 
     expect(resB.status).toBe(200);
+    expect(resB.body.softDeleted).toBe(true);
 
-    expect(await Conversation.findById(conversationId)).toBeNull();
-    expect(await Message.countDocuments({ conversation: conversationId })).toBe(0);
+    // Conversation and messages should still exist (no auto hard-delete)
+    const convo = await Conversation.findById(conversationId);
+    expect(convo).not.toBeNull();
+    expect(convo.deletedBy.map((id) => id.toString())).toContain(userA._id.toString());
+    expect(convo.deletedBy.map((id) => id.toString())).toContain(userB._id.toString());
+    expect(await Message.countDocuments({ conversation: conversationId })).toBeGreaterThan(0);
+
+    // Verify socket participant_deleted was sent to userA
+    expect(mockTo).toHaveBeenCalledWith(userA._id.toString());
+    const call = mockEmit.mock.calls.find(call => call[0] === "conversation:participant_deleted");
+    expect(call).toBeDefined();
+    expect(call[1].conversationId.toString()).toBe(conversationId);
   });
 
   it("returns 400 when a user tries to delete an already-deleted conversation", async () => {

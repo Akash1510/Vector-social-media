@@ -4,21 +4,44 @@ import Post from "../models/post.model.js";
 import User from "../models/user.model.js";
 import Follow from "../models/follow.model.js";
 import Notification from "../models/notification.model.js";
+import Report from "../models/report.model.js";
 import { getIO } from "../socket/socket.js";
+import { commentSchema } from "../validators/comment.validator.js";
+import asyncHandler from "../utils/asyncHandler.js";
+// Hard upper bound on comments returned per request.
+const MAX_LIMIT = 50;
 
-export const addComment = async (req, res) => {
-    try {
+export const addComment = asyncHandler(async (req, res) => {
         const { postId } = req.params;
-        const { content } = req.body;
-        if (!content?.trim()) {
+        const parsed = commentSchema.safeParse({
+            post: postId,
+            content: req.body.content,
+            parentCommentId: req.body.parentCommentId
+        });
+        if (!parsed.success) {
             return res.status(400).json({
-                message: "Comment cannot be empty"
+                message: parsed.error.issues[0]?.message ?? "Invalid request",
             });
         }
+        const { content, parentCommentId } = parsed.data;
         const post = await Post.findById(postId);
         if (!post) {
             return res.status(404).json({ message: "Post not found" });
         }
+
+        let resolvedParentId = null;
+        if (parentCommentId) {
+            const parentComment = await Comment.findById(parentCommentId);
+            if (!parentComment) {
+                return res.status(404).json({ message: "Parent comment not found" });
+            }
+            if (parentComment.post.toString() !== postId) {
+                return res.status(400).json({ message: "Parent comment does not belong to this post" });
+            }
+            // Enforce a 2-level comment hierarchy
+            resolvedParentId = parentComment.parentCommentId || parentComment._id;
+        }
+
         const authorUser = await User.findById(post.author);
         if (req.user) {
             const currentUserId = req.user.id;
@@ -61,7 +84,8 @@ export const addComment = async (req, res) => {
         const comment = await Comment.create({
             post: postId,
             author: req.user.id,
-            content
+            content,
+            parentCommentId: resolvedParentId
         });
         await Post.findByIdAndUpdate(postId, {
             $inc: { commentsCount: 1 },
@@ -82,13 +106,10 @@ export const addComment = async (req, res) => {
             });
         }
         return res.status(201).json(populated);
-    } catch (error) {
-        return res.status(500).json({ message: error.message });
-    }
-};
+   
+});
 
-export const getPostComments = async (req, res) => {
-    try {
+export const getPostComments = asyncHandler(async (req, res) => {
         const { postId } = req.params;
 
         const post = await Post.findById(postId).select("author");
@@ -117,7 +138,7 @@ export const getPostComments = async (req, res) => {
         }
 
         const cursor = req.query.cursor || null;
-        const limit = parseInt(req.query.limit) || 20;
+        const limit = Math.min(Math.max(parseInt(req.query.limit) || 20, 1), MAX_LIMIT);
 
         let excludeUserIds = [];
         if (req.user) {
@@ -130,6 +151,8 @@ export const getPostComments = async (req, res) => {
 
         let filter = {
             post: postId,
+            parentCommentId: { $in: [null, undefined] },
+            isFlaggedForReview: { $ne: true },
             ...(excludeUserIds.length ? { author: { $nin: excludeUserIds } } : {}),
         };
 
@@ -146,35 +169,78 @@ export const getPostComments = async (req, res) => {
             .limit(limit)
             .populate("author", "username name avatar");
 
+        const topLevelIds = comments.map(c => c._id);
+        let replies = [];
+        if (topLevelIds.length > 0) {
+            replies = await Comment.find({
+                parentCommentId: { $in: topLevelIds },
+                isFlaggedForReview: { $ne: true },
+                ...(excludeUserIds.length ? { author: { $nin: excludeUserIds } } : {}),
+            })
+            .sort({ _id: 1 })
+            .populate("author", "username name avatar");
+        }
+
+        const commentsWithReplies = comments.map(comment => {
+            const commentObj = comment.toObject();
+            commentObj.replies = replies.filter(
+                reply => reply.parentCommentId && reply.parentCommentId.toString() === comment._id.toString()
+            );
+            return commentObj;
+        });
+
         const hasMore = comments.length === limit;
         const nextCursor = hasMore ? comments[comments.length - 1]._id : null;
 
-        res.json({ comments, nextCursor, hasMore });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-};
+        res.json({ comments: commentsWithReplies, nextCursor, hasMore });
+});
 
-export const deleteComment = async (req, res) => {
-    try {
-        const comment = await Comment.findById(req.params.commentId);
-        if (!comment) {
-            return res.status(404).json({
-                message: "Comment not found"
-            });
-        }
-        if (comment.author.toString() !== req.user.id) {
-            return res.status(403).json({
-                message: "Not allowed"
-            });
-        }
-        await comment.deleteOne();
-        await Notification.deleteOne({ comment: comment._id, type: "comment" });
-        await Post.findByIdAndUpdate(comment.post, { $inc: { commentsCount: -1 }, });
-        res.json({
-            success: true
-        });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+export const deleteComment = asyncHandler(async (req, res) => {
+    const comment = await Comment.findById(req.params.commentId);
+    if (!comment) {
+        return res.status(404).json({ message: "Comment not found" });
     }
-};
+
+    const post = await Post.findById(comment.post).select("author");
+
+    const isCommentAuthor = comment.author.toString() === req.user.id;
+    const isPostAuthor = post?.author?.toString() === req.user.id;
+
+    if (!isCommentAuthor && !isPostAuthor) {
+        return res.status(403).json({ message: "Not allowed" });
+    }
+
+    const session = await mongoose.startSession();
+    let deletedNotifications = [];
+    try {
+        await session.withTransaction(async () => {
+            const replies = await Comment.find({ parentCommentId: comment._id }).select("_id isFlaggedForReview").session(session);
+            const replyIds = replies.map(r => r._id);
+            const allCommentIds = [comment._id, ...replyIds];
+
+            let decrementCount = 0;
+            if (!comment.isFlaggedForReview) decrementCount++;
+            replies.forEach(r => {
+                if (!r.isFlaggedForReview) decrementCount++;
+            });
+
+            await Comment.deleteMany({ _id: { $in: allCommentIds } }, { session });
+            await Report.deleteMany({ targetType: "comment", targetId: { $in: allCommentIds } }, { session });
+            await Notification.deleteMany({ comment: { $in: allCommentIds } }, { session });
+            
+            if (decrementCount > 0) {
+                await Post.findByIdAndUpdate(comment.post, { $inc: { commentsCount: -decrementCount } }, { session });
+            }
+        });
+    } finally {
+        await session.endSession();
+    }
+
+    for (const notif of deletedNotifications) {
+        getIO().to(notif.recipient.toString()).emit("notification:removed", {
+            notificationId: notif._id,
+        });
+    }
+
+    res.json({ success: true });
+});

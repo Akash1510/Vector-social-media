@@ -1,13 +1,12 @@
 import Contact from "../models/contact.model.js";
 import { contactSchema } from "../validators/contact.validator.js";
-
+import asyncHandler from "../utils/asyncHandler.js";
 const getValidationMessage = (validationResult, fallbackMessage) => {
   const firstIssue = validationResult?.error?.issues?.[0];
   return firstIssue?.message || fallbackMessage;
 };
 
-export const submitContact = async (req, res) => {
-  try {
+export const submitContact = asyncHandler(async (req, res) => {
     const validation = contactSchema.safeParse(req.body);
 
     if (!validation.success) {
@@ -31,11 +30,5 @@ export const submitContact = async (req, res) => {
       message: "Message submitted successfully",
       contactId: contact._id,
     });
-  } catch (error) {
-    const message = error.name === "ValidationError" ? error.message : "Failed to submit message";
-    return res.status(400).json({
-      success: false,
-      message,
-    });
-  }
-};
+ 
+});

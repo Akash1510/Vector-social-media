@@ -65,9 +65,9 @@ describe("Invalid Post ID handling", () => {
     expect(res.body.message).toMatch(/Invalid user ID format/i);
   });
 
-  it("POST /api/posts/like/:id with malformed id should return 400", async () => {
+  it("POST /api/posts/:id/like with malformed id should return 400", async () => {
     const res = await request(app)
-      .post("/api/posts/like/invalid-id")
+      .post("/api/posts/invalid-id/like")
       .set("Cookie", cookie);
 
     expect(res.status).toBe(400);
@@ -75,9 +75,9 @@ describe("Invalid Post ID handling", () => {
     expect(res.body.message).toMatch(/Invalid post ID format/i);
   });
 
-  it("PUT /api/posts/:id/like with malformed id should return 400", async () => {
+  it("POST /api/posts/:id/unlike with malformed id should return 400", async () => {
     const res = await request(app)
-      .put("/api/posts/invalid-id/like")
+      .post("/api/posts/invalid-id/unlike")
       .set("Cookie", cookie);
 
     expect(res.status).toBe(400);

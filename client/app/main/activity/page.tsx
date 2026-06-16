@@ -6,6 +6,7 @@ import FollowActivityPanel from "@/components/FollowActivityPanel";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import axios from "axios";
+import SearchBar from "@/components/SearchBar";
 
 export default function Activity() {
   const [search, setSearch] = useState("");
@@ -25,6 +26,7 @@ useEffect(() => {
       );
 
       setPendingFollowCount(data.length);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (error) {
       console.error("Failed to fetch pending follow requests");
     }
@@ -61,19 +63,15 @@ useEffect(() => {
 </button>
         </div>
 
-        <div className="flex-grow flex flex-col mt-5 overflow-hidden">
+        <div className="grow flex flex-col mt-5 overflow-hidden">
          {view === "notifications" ? (
   <>
-    <div className="search-pill">
-      <Search className="h-5 text-muted-foreground" />
-      <input
-        type="text"
-        placeholder="Search notifications"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="h-full w-full bg-transparent outline-0 placeholder:text-muted-foreground text-foreground"
-      />
-    </div>
+    <SearchBar
+      placeholder="Search notifications"
+      value={search}
+      onChange={setSearch}
+      inputClassName="text-foreground"
+    />
 
     <div className="flex-1 mt-5 overflow-y-auto hide-scrollbar">
       <NotificationsPanel search={search} />

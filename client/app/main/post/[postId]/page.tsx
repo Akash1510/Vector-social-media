@@ -75,7 +75,7 @@ export default function PostPage() {
         <div className="overflow-y-auto h-screen">
           <Navbar />
           <div className="px-5 py-12 md:px-10">
-            <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/50 py-20 text-center">
+            <div className="rounded-xl border border-dashed border-border/50 min-h-[60vh] flex flex-col items-center justify-center text-center px-6 py-8">
               <Lock className="mb-3 h-12 w-12 text-foreground opacity-30" />
               <h3 className="text-lg font-semibold text-foreground">
                 This account is private
@@ -98,7 +98,7 @@ export default function PostPage() {
       <div className="px-5 md:px-10">
         <PostCard post={post} setPost={setPost} />
         <div className="mt-6">
-          <CommentsSection postId={post._id} />
+          <CommentsSection postId={post._id} postAuthorId={post.author?._id} />
         </div>
       </div>
     </div>

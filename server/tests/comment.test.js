@@ -1,3 +1,13 @@
+import { jest } from '@jest/globals';
+
+jest.unstable_mockModule('../src/socket/socket.js', () => ({
+  getIO: () => ({
+    to: () => ({
+      emit: () => {},
+    }),
+  }),
+}));
+
 const { default: request } = await import('supertest');
 const { default: app } = await import('../src/app.js');
 const { default: User } = await import('../src/models/user.model.js');
@@ -104,6 +114,34 @@ describe('Comment Routes', () => {
       expect(res.status).toBe(404);
       expect(res.body.message).toBe("Post not found");
     });
+
+    it('should add a reply to a comment successfully and reference parentCommentId', async () => {
+      const parentComment = await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Parent comment content"
+      });
+
+      const res = await request(app)
+        .post(`/api/comments/add/${post._id}`)
+        .set('Cookie', cookie2)
+        .send({ content: "This is a reply!", parentCommentId: parentComment._id.toString() });
+
+      expect(res.status).toBe(201);
+      expect(res.body.content).toBe("This is a reply!");
+      expect(res.body.parentCommentId).toBe(parentComment._id.toString());
+    });
+
+    it('should return 404 if parentCommentId is not found', async () => {
+      const nonExistentId = '60c72b2f9b1d8e1f88ef8b5a';
+      const res = await request(app)
+        .post(`/api/comments/add/${post._id}`)
+        .set('Cookie', cookie1)
+        .send({ content: "This is a reply!", parentCommentId: nonExistentId });
+
+      expect(res.status).toBe(404);
+      expect(res.body.message).toBe("Parent comment not found");
+    });
   });
 
   describe('GET /api/comments/:postId', () => {
@@ -144,6 +182,31 @@ describe('Comment Routes', () => {
 
       expect(res.status).toBe(404);
       expect(res.body.message).toBe("Post not found");
+    });
+
+    it('should structure replies hierarchically under comments', async () => {
+      const parent = await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Root Comment"
+      });
+
+      await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Reply 1",
+        parentCommentId: parent._id
+      });
+
+      const res = await request(app)
+        .get(`/api/comments/${post._id}`)
+        .set('Cookie', cookie1);
+
+      expect(res.status).toBe(200);
+      expect(res.body.comments.length).toBe(1); // Only root comment returned at top-level
+      expect(res.body.comments[0].content).toBe("Root Comment");
+      expect(res.body.comments[0].replies.length).toBe(1);
+      expect(res.body.comments[0].replies[0].content).toBe("Reply 1");
     });
   });
 
@@ -201,6 +264,74 @@ describe('Comment Routes', () => {
 
       expect(res.status).toBe(404);
       expect(res.body.message).toBe("Comment not found");
+    });
+
+    it('should perform cascading delete on child replies when a parent comment is deleted', async () => {
+      const parent = await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Root Comment to delete"
+      });
+
+      const reply = await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Child Reply",
+        parentCommentId: parent._id
+      });
+
+      // Update post comments count accordingly
+      await Post.findByIdAndUpdate(post._id, { $inc: { commentsCount: 2 } });
+
+      const preDeletePost = await Post.findById(post._id);
+      expect(preDeletePost.commentsCount).toBe(3); // 1 from beforeEach + 2 new
+
+      const res = await request(app)
+        .delete(`/api/comments/delete/${parent._id}`)
+        .set('Cookie', cookie1);
+
+      expect(res.status).toBe(200);
+
+      // Parent and reply should be deleted
+      const dbParent = await Comment.findById(parent._id);
+      const dbReply = await Comment.findById(reply._id);
+      expect(dbParent).toBeNull();
+      expect(dbReply).toBeNull();
+
+      const postAfterDelete = await Post.findById(post._id);
+      expect(postAfterDelete.commentsCount).toBe(1); // decremented by 2
+    });
+    it('should not decrement commentsCount if comment is already flagged for review', async () => {
+      // 1. Create a normal comment
+      const commentToFlag = await Comment.create({
+        post: post._id,
+        author: user1._id,
+        content: "Comment that will be flagged"
+      });
+
+      // 2. Increment commentsCount to simulate normal comment creation
+      await Post.findByIdAndUpdate(post._id, { $inc: { commentsCount: 1 } });
+
+      let preFlagPost = await Post.findById(post._id);
+      expect(preFlagPost.commentsCount).toBe(2); // 1 from beforeEach + 1 new
+
+      // 3. Simulate the moderation flow: mark as flagged and decrement count
+      await Comment.findByIdAndUpdate(commentToFlag._id, { isFlaggedForReview: true });
+      await Post.findByIdAndUpdate(post._id, { $inc: { commentsCount: -1 } });
+
+      let postBeforeDelete = await Post.findById(post._id);
+      expect(postBeforeDelete.commentsCount).toBe(1);
+
+      // 4. Delete the comment via API
+      const res = await request(app)
+        .delete(`/api/comments/delete/${commentToFlag._id}`)
+        .set('Cookie', cookie1);
+
+      expect(res.status).toBe(200);
+
+      // 5. Verify count remains 1, no double decrement
+      const postAfterDelete = await Post.findById(post._id);
+      expect(postAfterDelete.commentsCount).toBe(1);
     });
   });
 });

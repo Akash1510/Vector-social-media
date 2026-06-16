@@ -12,6 +12,7 @@ import MutualFollowersBar from "./MutualFollowersBar";
 import { useAppContext } from "@/context/AppContext";
 import axios from "axios";
 import { toast } from "react-toastify";
+import { getErrorMessage } from "@/lib/error";
 import type { UserSummary } from "@/lib/types";
 import SavedPostsFeed from "./SavedPostsFeed";
 
@@ -31,7 +32,7 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
   const tabs = isSelfProfile ? ["posts", "followers", "following", "saved"] : ["posts", "followers", "following"];
   const [postsCount, setPostsCount] = useState<number>(0);
   const [following, setFollowing] = useState<boolean>(isFollowing ?? false);
-  const [requested] = useState<boolean>(isRequested ?? false);
+  const [requested, setRequested] = useState<boolean>(isRequested ?? false);
   const [blocked, setBlocked] = useState<boolean>(user.isBlockedByCurrentUser ?? false);
   
   // CHANGE 2: Added the dropdownOpen state
@@ -51,10 +52,7 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
         }
       }
     } catch (error: unknown) {
-      const message = axios.isAxiosError(error)
-        ? error.response?.data?.message
-        : "Failed to complete action";
-      toast.error(message || "Failed to complete action");
+      toast.error(getErrorMessage(error, "Failed to complete action"));
     }
   };
 
@@ -127,6 +125,7 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
                         isRequested={requested}
                         onFollowChange={(next) => {
                           setFollowing(next);
+                          if (!next) setRequested(false);
                           setUserData(prev => prev ? {
                             ...prev,
                             following: next
@@ -240,20 +239,20 @@ export default function ProfileLayout({ user, isFollowing, isRequested }: Profil
         ))}
       </div>
 
-      <div className="mt-8 ml-auto max-w-272">
+      <div className="mt-8 mx-auto max-w-272">
         {user.isBlockedByTarget ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center border-t border-dashed border-border/50">
+          <div className="flex flex-col items-center justify-center min-h-[40vh] text-center border-t border-dashed border-border/50">
             <Lock className="h-12 w-12 mb-3 opacity-30 text-foreground" />
             <h3 className="text-lg font-semibold text-foreground">This user is unavailable</h3>
           </div>
         ) : blocked ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center border-t border-dashed border-border/50">
+          <div className="flex flex-col items-center justify-center min-h-[40vh] text-center border-t border-dashed border-border/50">
             <Lock className="h-12 w-12 mb-3 opacity-30 text-foreground" />
             <h3 className="text-lg font-semibold text-foreground">You have blocked this user</h3>
             <p className="text-sm text-slate-700 dark:text-slate-300">Unblock them to see their posts and follow them.</p>
           </div>
         ) : !canSeeContent ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center border-t border-dashed border-border/50">
+          <div className="flex flex-col items-center justify-center min-h-[40vh] text-center border-t border-dashed border-border/50">
             <Lock className="h-12 w-12 mb-3 opacity-30 text-foreground" />
             <h3 className="text-lg font-semibold text-foreground">This account is private</h3>
             <p className="text-sm text-slate-700 dark:text-slate-300">Follow this account to see their posts and followers.</p>

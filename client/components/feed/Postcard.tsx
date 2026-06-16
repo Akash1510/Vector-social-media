@@ -3,7 +3,7 @@
 import { useAppContext } from "@/context/AppContext";
 import axios from "axios";
 import Image from "next/image";
-import { Bookmark, BookmarkCheck , Heart, MessageCircle, HelpCircle, Hammer, Share2, MessagesSquare, MoreHorizontal, Trash2, Flag, Forward, Pencil } from "lucide-react";
+import { Bookmark, BookmarkCheck , Heart, MessageCircle, HelpCircle, Hammer, Share2, MessagesSquare, MoreHorizontal, Trash2, Flag, Forward, Pencil, Pin } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "react-toastify";
@@ -81,16 +81,20 @@ export default function PostCard({ post, setPost }: PostCardProps) {
 
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement | null>(null);
+    const likeInFlight = useRef(false);
     const [likeAnimating, setLikeAnimating] = useState(false);
     const [imageState, setImageState] = useState<{
         src: string | null;
         loaded: boolean;
         failed: boolean;
+        slowLoad: boolean;
     }>({
         src: post.image || null,
         loaded: false,
         failed: false,
+        slowLoad: false,
     });
+    const imageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     function timeAgo(dateString: string) {
         const now = new Date().getTime();
@@ -116,58 +120,80 @@ export default function PostCard({ post, setPost }: PostCardProps) {
     }
 
     const handleLike = async () => {
-        // Guard: don't proceed if user id missing or a like request is already in-flight
+        if (likeInFlight.current) return;
         if (!userData?.id) {
             toast.error("User not authenticated");
             return;
         }
-        if (likeLoading) return;
 
-        setLikeLoading(true);
+        const shouldLike = !isLiked;
+        likeInFlight.current = true;
+
+        if (shouldLike) {
+            setLikeAnimating(true);
+            setTimeout(() => setLikeAnimating(false), 300);
+        }
+
+        const updatedLikes = shouldLike
+            ? getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id])
+            : uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id);
+
+        setLocalLikes(updatedLikes);
+
+        if (setPost) {
+            setPost(prev =>
+                prev
+                    ? { ...prev, likes: updatedLikes }
+                    : prev
+            );
+        } else {
+            setPosts(prev =>
+                prev.map(p =>
+                    p._id === post._id
+                        ? { ...p, likes: updatedLikes }
+                        : p
+                )
+            );
+        }
 
         try {
-            // FIX: Make the API call FIRST — do not update UI before we know it succeeded
-            await axios.put(
-                `${BACKEND_URL}/api/posts/${post._id}/like`,
+            const endpoint = shouldLike
+                ? `${BACKEND_URL}/api/posts/${post._id}/like`
+                : `${BACKEND_URL}/api/posts/${post._id}/unlike`;
+            const res = await axios.post<{ liked: boolean; likesCount: number }>(
+                endpoint,
                 {},
                 { withCredentials: true }
             );
-
-            // Only reach here if the request succeeded — now update UI
-            const updatedLikes = isLiked
-                ? uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id)
-                : getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id]);
-
-            // Trigger animation only on a new like (not unlike), after confirmed success
-            if (!isLiked) {
-                setLikeAnimating(true);
-                setTimeout(() => setLikeAnimating(false), 300);
-            }
-
-            setLocalLikes(updatedLikes);
-
-            if (setPost) {
-                setPost(prev =>
-                    prev ? { ...prev, likes: updatedLikes } : prev
-                );
-            } else {
-                setPosts(prev =>
-                    prev.map(p =>
-                        p._id === post._id
-                            ? { ...p, likes: updatedLikes }
-                            : p
-                    )
-                );
+            const { liked: serverLiked } = res.data;
+            if (serverLiked !== shouldLike) {
+                const correctedLikes = serverLiked
+                    ? getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id])
+                    : uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id);
+                setLocalLikes(correctedLikes);
+                if (setPost) {
+                    setPost(prev => prev ? { ...prev, likes: correctedLikes } : prev);
+                } else {
+                    setPosts(prev => prev.map(p => p._id === post._id ? { ...p, likes: correctedLikes } : p));
+                }
             }
         } catch (error) {
-            // FIX: No UI was changed, so no rollback needed — just show the error
+            const revertedLikes = shouldLike
+                ? uniqueLikes.filter((like) => getLikeUserId(like) !== userData.id)
+                : getUniqueLikes([...uniqueLikes, currentUserLike ?? userData.id]);
+            setLocalLikes(revertedLikes);
+            if (setPost) {
+                setPost(prev => prev ? { ...prev, likes: revertedLikes } : prev);
+            } else {
+                setPosts(prev => prev.map(p => p._id === post._id ? { ...p, likes: revertedLikes } : p));
+            }
             if (axios.isAxiosError(error) && error.response?.status === 403) {
                 toast.error("Action blocked");
             } else {
                 toast.error("Failed to like post. Please try again.");
             }
         } finally {
-            setLikeLoading(false);
+            likeInFlight.current = false;
         }
     };
 
@@ -217,7 +243,7 @@ export default function PostCard({ post, setPost }: PostCardProps) {
             return;
         }
 
-        const timeoutId = setTimeout(() => {
+        imageTimeoutRef.current = setTimeout(() => {
             setImageState((prev) => {
                 const currentSrc = post.image || null;
                 if (prev.src === currentSrc && (prev.loaded || prev.failed)) {
@@ -225,14 +251,18 @@ export default function PostCard({ post, setPost }: PostCardProps) {
                 }
 
                 return {
+                    ...prev,
                     src: currentSrc,
-                    loaded: true,
-                    failed: true,
+                    slowLoad: true,
                 };
             });
         }, 8000);
 
-        return () => clearTimeout(timeoutId);
+        return () => {
+            if (imageTimeoutRef.current) {
+                clearTimeout(imageTimeoutRef.current);
+            }
+        };
     }, [post.image]);
     useEffect(() => {
         setBookmarked(post.isBookmarked ?? false);
@@ -262,27 +292,37 @@ export default function PostCard({ post, setPost }: PostCardProps) {
                 });
             } else {
                 await navigator.clipboard.writeText(postUrl);
-                toast.success("Post link copied to clipboard");
-            }
-
-            // Increment share count in DB
-            await axios.put(`${BACKEND_URL}/api/posts/${post._id}/share`, {}, { withCredentials: true });
+                // Increment share count in DB
+            await axios.put(
+                `${BACKEND_URL}/api/posts/${post._id}/share`,
+                {},
+                { withCredentials: true }
+            );
 
             // Update local state
             if (setPost) {
-                setPost((prev) => prev ? ({
-                    ...prev,
-                    sharesCount: (prev.sharesCount || 0) + 1,
-                }) : prev);
+                setPost((prev) =>
+                    prev
+                        ? {
+                            ...prev,
+                            sharesCount: (prev.sharesCount || 0) + 1,
+                        }
+                        : prev
+                );
             } else {
-                setPosts(prev =>
-                    prev.map(p =>
+                setPosts((prev) =>
+                    prev.map((p) =>
                         p._id === post._id
                             ? { ...p, sharesCount: (p.sharesCount || 0) + 1 }
                             : p
                     )
                 );
             }
+
+                toast.success("Post link copied to clipboard");
+            }
+
+            
 
         } catch {
             // share dismissed or failed
@@ -333,9 +373,45 @@ export default function PostCard({ post, setPost }: PostCardProps) {
         setBookmarkLoading(false);
         }
     };
+    const handlePin = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!userData?.id) {
+            toast.error("User not authenticated");
+            return;
+        }
+        try {
+            const res = await axios.post(
+                `${BACKEND_URL}/api/posts/${post._id}/pin`,
+                {},
+                { withCredentials: true }
+            );
+            const { isPinned: serverPinned } = res.data;
+            if (setPost) {
+                setPost((prev) => prev ? { ...prev, isPinned: serverPinned } : prev);
+            } else {
+                setPosts((prev) =>
+                    prev.map((p) => (p._id === post._id ? { ...p, isPinned: serverPinned } : p))
+                );
+            }
+            toast.success(res.data.message || (serverPinned ? "Post pinned" : "Post unpinned"));
+            setMenuOpen(false);
+        } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.data?.message) {
+                toast.error(error.response.data.message);
+            } else {
+                toast.error("Failed to pin/unpin post");
+            }
+        }
+    };
     return (
         <div className="content-card glass-hover relative overflow-clip cursor-pointer"
             onClick={openPost}>
+            {post.isPinned && (
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2.5">
+                    <Pin size={14} className="rotate-[45deg] fill-current" />
+                    Pinned Post
+                </div>
+            )}
             <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center flex-wrap sm:justify-between w-[90%]">
                     <div className="flex items-center gap-2">
@@ -391,6 +467,14 @@ Report post </button>
 
                             {isOwner && (
                                 <button className="w-full cursor-pointer flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-black/3 dark:hover:bg-white/5"
+                                    onClick={handlePin}>
+                                    <Pin size={14} />
+                                    {post.isPinned ? "Unpin post" : "Pin post"}
+                                </button>
+                            )}
+
+                            {isOwner && (
+                                <button className="w-full cursor-pointer flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-black/3 dark:hover:bg-white/5"
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setMenuOpen(false);
@@ -440,21 +524,29 @@ Report post </button>
                         <Image
                             key={post.image}
                             src={post.image}
-                            alt="Post attachment"
+                            alt={
+                                post.content
+                                    ? `Post image by ${post.author?.username}: ${post.content.slice(0, 100)}`
+                                    : `Post image by ${post.author?.username}`
+                            }
                             width={1200}
                             height={800}
-                            onLoad={() =>
+                            onLoad={() => {
+                                if (imageTimeoutRef.current) clearTimeout(imageTimeoutRef.current);
                                 setImageState({
                                     src: post.image || null,
                                     loaded: true,
                                     failed: false,
-                                })
-                            }
+                                    slowLoad: false,
+                                });
+                            }}
                             onError={() => {
+                                if (imageTimeoutRef.current) clearTimeout(imageTimeoutRef.current);
                                 setImageState({
                                     src: post.image || null,
-                                    loaded: true,
+                                    loaded: false,
                                     failed: true,
+                                    slowLoad: false,
                                 });
                             }}
                             className={`w-full h-full object-cover transition-opacity duration-200 ${isCurrentImageLoaded ? "opacity-100" : "opacity-0"
@@ -512,7 +604,17 @@ Report post </button>
                 </div>
 
                 <div>
-                    <p className="text-sm sm:text-md">{timeAgo(post.createdAt)}</p>
+                    <p className="text-sm sm:text-md text-foreground/70 flex items-center gap-1">
+                        {timeAgo(post.createdAt)}
+                        {post.isEdited && (
+                            <span 
+                                title={post.editedAt ? `Edited: ${new Date(post.editedAt).toLocaleString()}` : 'Edited'}
+                                className="text-xs text-foreground/50 hover:text-foreground/80 transition-colors cursor-help"
+                            >
+                                • edited
+                            </span>
+                        )}
+                    </p>
                 </div>
             </div>
 

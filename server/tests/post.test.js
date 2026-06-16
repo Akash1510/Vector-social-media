@@ -31,6 +31,11 @@ const { default: Post } = await import('../src/models/post.model.js');
 const { default: Comment } = await import('../src/models/comment.model.js');
 const { default: Notification } = await import('../src/models/notification.model.js');
 
+const validPng = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d,
+]);
+
 describe('Post and Comment Flows', () => {
   let cookie;
   let user;
@@ -89,7 +94,7 @@ describe('Post and Comment Flows', () => {
         .set('Cookie', cookie)
         .field('content', 'Post with image content')
         .field('intent', 'share')
-        .attach('image', Buffer.from('dummy image data'), 'image.png');
+        .attach('image', validPng, { filename: 'image.png', contentType: 'image/png' });
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
@@ -109,7 +114,7 @@ describe('Post and Comment Flows', () => {
         .post('/api/posts')
         .set('Cookie', cookie)
         .field('intent', 'build')
-        .attach('image', Buffer.from('dummy image data 2'), 'build.png');
+        .attach('image', validPng, { filename: 'build.png', contentType: 'image/png' });
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
@@ -153,7 +158,7 @@ describe('Post and Comment Flows', () => {
         .set('Cookie', cookie)
         .field('intent', 'share')
         .field('content', 'This post will fail to save')
-        .attach('image', Buffer.from('dummy data'), 'fail.png');
+        .attach('image', validPng, { filename: 'fail.png', contentType: 'image/png' });
 
       expect(res.status).toBe(500);
       expect(res.body.success).toBe(false);
@@ -163,6 +168,50 @@ describe('Post and Comment Flows', () => {
       expect(mockDestroy).toHaveBeenCalledWith('posts/dummy_image_public_id');
 
       createSpy.mockRestore();
+    });
+
+    it('should reject a non-image MIME type before upload', async () => {
+      const res = await request(app)
+        .post('/api/posts')
+        .set('Cookie', cookie)
+        .field('intent', 'share')
+        .field('content', 'Invalid MIME upload')
+        .attach('image', Buffer.from('not an image'), { filename: 'payload.txt', contentType: 'text/plain' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Only JPEG, PNG, GIF, WebP, and AVIF images are allowed');
+    });
+
+    it('should reject a spoofed image extension with invalid file content', async () => {
+      const res = await request(app)
+        .post('/api/posts')
+        .set('Cookie', cookie)
+        .field('intent', 'share')
+        .field('content', 'Spoofed image upload')
+        .attach('image', Buffer.from('not really a png'), { filename: 'spoof.png', contentType: 'image/png' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Only valid JPEG, PNG, GIF, WEBP, AVIF images are allowed');
+    });
+
+    it('should reject oversized post images at the controller boundary', async () => {
+      const oversizedPng = Buffer.concat([
+        validPng,
+        Buffer.alloc((2 * 1024 * 1024) + 1),
+      ]);
+
+      const res = await request(app)
+        .post('/api/posts')
+        .set('Cookie', cookie)
+        .field('intent', 'share')
+        .field('content', 'Oversized upload')
+        .attach('image', oversizedPng, { filename: 'large.png', contentType: 'image/png' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toContain('Post image must be 2MB or smaller');
     });
   });
 
@@ -188,7 +237,7 @@ describe('Post and Comment Flows', () => {
         .set('Cookie', cookie)
         .field('content', 'Updated content with image')
         .field('intent', 'share')
-        .attach('image', Buffer.from('new dummy image data'), 'new_image.png');
+        .attach('image', validPng, { filename: 'new_image.png', contentType: 'image/png' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
@@ -310,11 +359,11 @@ describe('Post and Comment Flows', () => {
     });
   });
 
-  describe('Like Toggle', () => {
+  describe('Like / Unlike', () => {
     it('should like and then unlike a post', async () => {
       // Like
       const likeRes = await request(app)
-        .post(`/api/posts/like/${post._id}`)
+        .post(`/api/posts/${post._id}/like`)
         .set('Cookie', cookie);
 
       expect(likeRes.body.success).toBe(true);
@@ -323,7 +372,7 @@ describe('Post and Comment Flows', () => {
 
       // Unlike
       const unlikeRes = await request(app)
-        .post(`/api/posts/like/${post._id}`)
+        .post(`/api/posts/${post._id}/unlike`)
         .set('Cookie', cookie);
 
       expect(unlikeRes.body.success).toBe(true);
@@ -582,7 +631,8 @@ describe('Post and Comment Flows', () => {
       expect(res.body.message).toContain('deleted successfully');
       
       const dbPost = await Post.findById(newPost._id);
-      expect(dbPost).toBeNull();
+      expect(dbPost.isDeleted).toBe(true);
+      expect(dbPost.deletedAt).toBeDefined();
       
       expect(mockDestroy).toHaveBeenCalledWith('posts/dummy_image_public_id');
     });
@@ -610,11 +660,114 @@ describe('Post and Comment Flows', () => {
       expect(res.body.message).toContain('deleted successfully');
 
       const dbPost = await Post.findById(newPost._id);
-      expect(dbPost).toBeNull();
+      expect(dbPost.isDeleted).toBe(true);
+      expect(dbPost.deletedAt).toBeDefined();
 
       expect(mockDestroy).toHaveBeenCalledWith('posts/dummy_image_public_id');
 
       consoleErrorSpy.mockRestore();
+    });
+  });
+
+  describe('Get Bookmarks Pagination and Filtering', () => {
+    it('should paginate bookmarks and filter based on blocking and privacy', async () => {
+      // Create user B (public, but blocks current user)
+      const userBData = {
+        name: "User", surname: "B", phoneNumber: "1111111110", email: "userb@test.com", password: "Password123", username: "userb", bio: "Bio", description: "Desc"
+      };
+      await request(app).post('/api/auth/register').send(userBData);
+      const userB = await User.findOne({ username: "userb" });
+
+      // Create user C (private, not followed by current user)
+      const userCData = {
+        name: "User", surname: "C", phoneNumber: "1111111120", email: "userc@test.com", password: "Password123", username: "userc", bio: "Bio", description: "Desc", isPrivate: true
+      };
+      await request(app).post('/api/auth/register').send(userCData);
+      const userC = await User.findOne({ username: "userc" });
+
+      // Create user D (public, followed by current user)
+      const userDData = {
+        name: "User", surname: "D", phoneNumber: "1111111130", email: "userd@test.com", password: "Password123", username: "userd", bio: "Bio", description: "Desc"
+      };
+      await request(app).post('/api/auth/register').send(userDData);
+      const userD = await User.findOne({ username: "userd" });
+
+      // Current user follows D
+      await Follow.create({ follower: user._id, following: userD._id, status: 'accepted' });
+
+      // User B blocks current user
+      userB.blockedUsers.push(user._id);
+      await userB.save();
+
+      // Create posts
+      // Post 1 (by D, public) - Should be visible
+      const post1 = await Post.create({ author: userD._id, content: "Post 1 content", intent: "share" });
+      // Post 2 (by B, blocks user) - Should be hidden
+      const post2 = await Post.create({ author: userB._id, content: "Post 2 content", intent: "share" });
+      // Post 3 (by C, private, not followed) - Should be hidden
+      const post3 = await Post.create({ author: userC._id, content: "Post 3 content", intent: "share", authorIsPrivate: true });
+      // Post 4 (by current user) - Should be visible
+      const post4 = await Post.create({ author: user._id, content: "Post 4 content", intent: "share" });
+
+      // Add all 4 posts to user's bookmarks
+      user.bookmarks = [post1._id, post2._id, post3._id, post4._id];
+      await user.save();
+
+      // Fetch bookmarks
+      const res = await request(app)
+        .get('/api/posts/bookmarks')
+        .set('Cookie', cookie);
+
+      expect(res.status).toBe(200);
+      expect(res.body.posts).toBeDefined();
+      // Only post 1 and post 4 should be returned.
+      // Posts are returned sorted by _id descending, so post 4 first, then post 1.
+      expect(res.body.posts.length).toBe(2);
+      expect(res.body.posts.map(p => p._id.toString())).toContain(post1._id.toString());
+      expect(res.body.posts.map(p => p._id.toString())).toContain(post4._id.toString());
+      expect(res.body.posts.map(p => p._id.toString())).not.toContain(post2._id.toString());
+      expect(res.body.posts.map(p => p._id.toString())).not.toContain(post3._id.toString());
+    });
+
+    it('should paginate correctly with limit', async () => {
+      const userD2Data = {
+        name: "User", surname: "D2", phoneNumber: "1111111132", email: "userd2@test.com", password: "Password123", username: "userd2", bio: "Bio", description: "Desc"
+      };
+      await request(app).post('/api/auth/register').send(userD2Data);
+      const userD2 = await User.findOne({ username: "userd2" });
+
+      // Create 12 posts for userD2
+      const posts = [];
+      for (let i = 1; i <= 12; i++) {
+        const post = await Post.create({ author: userD2._id, content: `Post ${i}`, intent: "share" });
+        posts.push(post);
+      }
+
+      // Bookmark all 12 posts
+      user.bookmarks = posts.map(p => p._id);
+      await user.save();
+
+      // Fetch first page (default limit is 10)
+      const res1 = await request(app)
+        .get('/api/posts/bookmarks')
+        .set('Cookie', cookie);
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.posts.length).toBe(10);
+      expect(res1.body.nextCursor).toBeDefined();
+      expect(res1.body.nextCursor).not.toBeNull();
+
+      // The 10th post returned should be the 3rd post created (posts index 2), since sort is _id DESC.
+      expect(res1.body.nextCursor).toBe(posts[2]._id.toString());
+
+      // Fetch second page using nextCursor
+      const res2 = await request(app)
+        .get(`/api/posts/bookmarks?cursor=${res1.body.nextCursor}`)
+        .set('Cookie', cookie);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.posts.length).toBe(2);
+      expect(res2.body.nextCursor).toBeNull();
     });
   });
 });

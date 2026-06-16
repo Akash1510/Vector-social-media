@@ -1,12 +1,19 @@
+import mongoose from "mongoose";
 import Message from "../models/message.model.js";
 import Conversation from "../models/conversation.model.js";
 import Notification from "../models/notification.model.js";
 import User from "../models/user.model.js";
 import { getIO } from "../socket/socket.js";
 import { sendMessageSchema } from "../validators/message.validator.js";
+import asyncHandler from "../utils/asyncHandler.js";
+import cloudinary from "../config/cloudinary.js";
+import { uploadToCloudinary } from "../utils/uploadCleanup.js";
+import { cleanupTempUpload, validateImageUpload } from "../utils/imageUploadValidation.js";
 
-export const getMessages = async (req, res) => {
-  try {
+// Hard upper bound on messages returned per page.
+const MAX_LIMIT = 100;
+
+export const getMessages = asyncHandler(async (req, res) => {
     const { conversationId } = req.params;
 
     // Verify the requesting user is a participant in this conversation
@@ -35,29 +42,35 @@ export const getMessages = async (req, res) => {
       }
     }
 
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), MAX_LIMIT);
     const before = req.query.before;
+
+    let beforeId;
+    if (before) {
+      if (!mongoose.Types.ObjectId.isValid(before)) {
+        return res.status(400).json({
+          message: "Invalid cursor.",
+        });
+      }
+      beforeId = new mongoose.Types.ObjectId(before);
+    }
 
     const filter = {
       conversation: conversationId,
       isDeleted: false,
-      ...(before && { createdAt: { $lt: new Date(before) } }),
+      ...(beforeId && { _id: { $lt: beforeId } }),
     };
 
     const messages = await Message.find(filter)
       .populate("sender", "username name avatar")
-      .sort({ createdAt: -1 })
+      .sort({ _id: -1 })
       .limit(limit);
 
     res.json({ messages: messages.reverse(), hasMore: messages.length === limit });
 
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+});
 
-export const sendMessage = async (req, res) => {
-  try {
+export const sendMessage = asyncHandler(async (req, res) => {
 
     const parsed = sendMessageSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -66,6 +79,11 @@ export const sendMessage = async (req, res) => {
     }
 
     const { conversationId, content } = parsed.data;
+
+    // Check if either content or file is present
+    if ((!content || content.trim().length === 0) && !req.file) {
+      return res.status(400).json({ message: "Message content cannot be empty" });
+    }
 
     const conversation = await Conversation.findById(conversationId);
 
@@ -109,63 +127,124 @@ export const sendMessage = async (req, res) => {
       }
     }
 
-    const message = await Message.create({
-      conversation: conversationId,
-      sender: req.user._id,
-      content,
-      isRead: false,
-    });
+    let image = null;
+    let imagePublicId = null;
 
-    const populated = await message.populate(
-      "sender",
-      "username name avatar"
-    );
+    try {
+      if (req.file) {
+        await validateImageUpload(req.file, {
+          allowedFormats: ["jpeg", "png", "gif", "webp", "avif"],
+          maxSize: 5 * 1024 * 1024,
+          label: "Message image",
+        });
+        const uploadResult = await uploadToCloudinary(req.file, {
+          folder: "messages",
+        });
+        image = uploadResult.secure_url;
+        imagePublicId = uploadResult.public_id;
+      }
 
-    if (receiverId) {
-
-      const filter = {
-        recipient: receiverId,
-        sender: req.user._id,
-        type: "message",
+      const message = await Message.create({
         conversation: conversationId,
+        sender: req.user._id,
+        content: content || "",
+        image,
+        imagePublicId,
         isRead: false,
-      };
-      // findOneAndUpdate with new:false returns the pre-update doc,
-      // or null when a new doc was upserted. Only emit on first insert.
-      const existing = await Notification.findOneAndUpdate(
-        filter,
-        { $setOnInsert: filter },
-        { upsert: true, returnDocument: "before" }
-      );
-      const io = getIO();
-      if (!existing) {
-        const notification = await Notification.findOne(filter);
-        if (notification) {
-          io.to(receiverId.toString()).emit("notification:new", {
-            notificationId: notification._id,
-            type: notification.type,
-          });
+      });
+
+      // Post-creation block re-verification: a concurrent blockUser may have
+      // deleted the conversation and notifications between the pre-check above
+      // and message creation. Re-check before emitting any socket events.
+      if (receiverId) {
+        const [postCreateReceiver, postCreateSender] = await Promise.all([
+          User.findById(receiverId).select("blockedUsers"),
+          User.findById(req.user._id).select("blockedUsers"),
+        ]);
+        const nowBlocked = postCreateSender?.blockedUsers?.some(
+          id => id.toString() === receiverId.toString()
+        ) || postCreateReceiver?.blockedUsers?.some(
+          id => id.toString() === req.user._id.toString()
+        );
+        if (nowBlocked) {
+          await Message.findByIdAndDelete(message._id);
+          if (imagePublicId) {
+            await cloudinary.uploader.destroy(imagePublicId).catch((error) => {
+              console.error("Cloudinary cleanup failed:", error);
+            });
+          }
+          return res.status(403).json({ message: "Action forbidden due to block status" });
         }
       }
-      
-      io.to(receiverId.toString()).emit("receive_message", populated);
 
+      const populated = await message.populate(
+        "sender",
+        "username name avatar"
+      );
+
+      // Update conversation timestamp BEFORE socket emission so all DB writes
+      // are confirmed before the client receives the real-time event.
+      const updatedConversation = await Conversation.findOneAndUpdate(
+        { _id: conversationId, participants: req.user._id },
+        { updatedAt: new Date() },
+        { new: true }
+      );
+      if (!updatedConversation) {
+        await Message.findByIdAndDelete(message._id);
+        if (imagePublicId) {
+          await cloudinary.uploader.destroy(imagePublicId).catch((error) => {
+            console.error("Cloudinary cleanup failed:", error);
+          });
+        }
+        return res.status(404).json({ message: "Conversation deleted during send" });
+      }
+
+      if (receiverId) {
+
+        const filter = {
+          recipient: receiverId,
+          sender: req.user._id,
+          type: "message",
+          conversation: conversationId,
+          isRead: false,
+        };
+        // Use updateOne to avoid a separate findOne query.
+        // upsertedId will only be populated if a new document was actually inserted.
+        const result = await Notification.updateOne(
+          filter,
+          { $setOnInsert: filter },
+          { upsert: true }
+        );
+        const io = getIO();
+        if (result.upsertedId) {
+          io.to(receiverId.toString()).emit("notification:new", {
+            notificationId: result.upsertedId,
+            type: filter.type,
+          });
+        }
+        
+        io.to(receiverId.toString()).emit("receive_message", populated);
+
+      }
+
+      res.json(populated);
+
+    } catch (error) {
+      await cleanupTempUpload(req.file);
+      if (imagePublicId) {
+        await cloudinary.uploader.destroy(imagePublicId).catch((error) => {
+          console.error("Cloudinary cleanup failed:", error);
+        });
+      }
+      return res.status(error.statusCode || 500).json({
+        message: error.message || "Something went wrong"
+      });
     }
 
-    await Conversation.findByIdAndUpdate(conversationId, {
-      updatedAt: new Date(),
-    });
+});
 
-    res.json(populated);
-
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-export const getUnreadCount = async (req, res) => {
-  try {
-    const { conversationId } = req.params;
+export const getUnreadCount = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
 
     // Verify user is a participant in this conversation
     const conversation = await Conversation.findOne({
@@ -181,17 +260,14 @@ export const getUnreadCount = async (req, res) => {
       conversation: conversationId,
       sender: { $ne: req.user._id },
       isRead: { $ne: true },
+      isDeleted: { $ne: true },
     });
 
     res.json({ unreadCount });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+});
 
-export const markConversationAsRead = async (req, res) => {
-  try {
-    const { conversationId } = req.params;
+export const markConversationAsRead = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
 
     // Verify user is a participant in this conversation
     const conversation = await Conversation.findOne({
@@ -203,17 +279,33 @@ export const markConversationAsRead = async (req, res) => {
       return res.status(403).json({ message: "Not a participant in this conversation" });
     }
 
+    const otherParticipant = conversation.participants.find(
+      (p) => p.toString() !== req.user._id.toString()
+    );
+
+    if (otherParticipant) {
+      const [currentUser, otherUser] = await Promise.all([
+        User.findById(req.user._id).select("blockedUsers"),
+        User.findById(otherParticipant).select("blockedUsers"),
+      ]);
+      const isBlocked = currentUser?.blockedUsers?.some(
+        id => id.toString() === otherParticipant.toString()
+      ) || otherUser?.blockedUsers?.some(
+        id => id.toString() === req.user._id.toString()
+      );
+      if (isBlocked) {
+        return res.status(403).json({ message: "Action forbidden due to block status" });
+      }
+    }
+
     await Message.updateMany(
       {
         conversation: conversationId,
         sender: { $ne: req.user._id },
         isRead: { $ne: true },
+        isDeleted: { $ne: true },
       },
       { $set: { isRead: true } }
-    );
-
-    const otherParticipant = conversation.participants.find(
-      (p) => p.toString() !== req.user._id.toString()
     );
 
     if (otherParticipant) {
@@ -224,15 +316,11 @@ export const markConversationAsRead = async (req, res) => {
     }
 
     res.json({ message: "Messages marked as read" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+  
+});
 
-export const deleteMessage = async (req, res) => {
-  try {
-
-    const message = await Message.findById(req.params.messageId);
+export const deleteMessage = asyncHandler(async (req, res) => {
+  const message = await Message.findById(req.params.messageId);
 
     if (!message) {
       return res.status(404).json({
@@ -244,6 +332,24 @@ export const deleteMessage = async (req, res) => {
       return res.status(403).json({
         message: "Not allowed"
       });
+    }
+
+    const conversation = await Conversation.findById(message.conversation);
+    if (conversation) {
+      const otherParticipant = conversation.participants.find(
+        p => p.toString() !== req.user._id.toString()
+      );
+      if (otherParticipant) {
+        const otherUser = await User.findById(otherParticipant).select("blockedUsers");
+        const isBlocked = req.user.blockedUsers?.some(
+          id => id.toString() === otherParticipant.toString()
+        ) || otherUser?.blockedUsers?.some(
+          id => id.toString() === req.user._id.toString()
+        );
+        if (isBlocked) {
+          return res.status(403).json({ message: "Action forbidden due to block status" });
+        }
+      }
     }
 
     if (message.isDeleted) {
@@ -259,8 +365,27 @@ export const deleteMessage = async (req, res) => {
 
     const io = getIO();
 
-    // Emit only to participants of this conversation, not every connected client
-    const conversation = await Conversation.findById(message.conversation);
+    // Find and remove the associated notification for the other participant
+    if (conversation) {
+      const otherParticipant = conversation.participants.find(
+        p => p.toString() !== req.user._id.toString()
+      );
+      if (otherParticipant) {
+        const deletedNotification = await Notification.findOneAndDelete({
+          type: "message",
+          conversation: message.conversation,
+          sender: req.user._id,
+          recipient: otherParticipant,
+        });
+
+        if (deletedNotification) {
+          io.to(otherParticipant.toString()).emit("notification:removed", {
+            notificationId: deletedNotification._id,
+          });
+        }
+      }
+    }
+
     if (conversation) {
       conversation.participants.forEach((participantId) => {
         io.to(participantId.toString()).emit("message_deleted", {
@@ -275,9 +400,4 @@ export const deleteMessage = async (req, res) => {
       message: "Message deleted successfully"
     });
 
-  } catch (error) {
-    res.status(500).json({
-      message: error.message
-    });
-  }
-};
+});

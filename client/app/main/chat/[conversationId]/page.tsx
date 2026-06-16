@@ -6,7 +6,7 @@ import axios from "axios";
 import { socket } from "@/socket/socket";
 import { useAppContext } from "@/context/AppContext";
 import { useRouter } from "next/navigation";
-import { Trash2, ArrowLeft, MoreHorizontal, ChevronDown, Check, CheckCheck } from "lucide-react";
+import { Trash2, ArrowLeft, MoreHorizontal, ChevronDown, Check, CheckCheck, Image as ImageIcon, X } from "lucide-react";
 import ConfirmModal from "@/components/modals/DeleteWarning";
 import SkeletonLoader from "@/components/loaders/SkeletonLoader";
 import { toast } from "react-toastify";
@@ -31,6 +31,9 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
   const [otherUser, setOtherUser] = useState<UserSummary | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(true);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [warningOpen, setWarningOpen] = useState(false);
   const [deleteChatConfirmOpen, setDeleteChatConfirmOpen] = useState(false);
@@ -164,19 +167,27 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
         );
       }
     };
+    const handleConversationDeleted = (data: { conversationId: string }) => {
+        if (data.conversationId === conversationId) {
+            router.push("/main/chat");
+            toast.info("This conversation has been deleted");
+        }
+    };
     socket.on("receive_message", handleReceiveMessage);
     socket.on("message_deleted", handleDelete);
     socket.on("typing", handleTyping);
     socket.on("stop_typing", handleStopTyping);
     socket.on("conversation_read", handleConversationRead);
+    socket.on("conversation:deleted", handleConversationDeleted);
     return () => {
         socket.off("receive_message", handleReceiveMessage);
         socket.off("message_deleted", handleDelete);
         socket.off("typing", handleTyping);
         socket.off("stop_typing", handleStopTyping);
         socket.off("conversation_read", handleConversationRead);
+        socket.off("conversation:deleted", handleConversationDeleted);
     };
-  }, [userData, conversationId, BACKEND_URL]);
+  }, [userData, conversationId, BACKEND_URL, router]);
 
   // FETCH CHAT
   useEffect(() => {
@@ -239,7 +250,7 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
     try {
       const oldest = messages[0];
       const { data } = await axios.get<MessagesResponse>(
-        `${BACKEND_URL}/api/messages/${conversationId}?before=${oldest.createdAt}&limit=${LIMIT}`,
+        `${BACKEND_URL}/api/messages/${conversationId}?before=${oldest._id}&limit=${LIMIT}`,
         { withCredentials: true }
       );
       const normalizedMessages = normalizeMessagesResponse(data);
@@ -304,6 +315,42 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
       behavior: "smooth",
     });
   };
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [imagePreview]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith("image/")) {
+        toast.error("Only image files are allowed");
+        return;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error("File size must be less than 5MB");
+        return;
+      }
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleRemoveImage = () => {
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+    }
+    setImageFile(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const handleTypingInput = (e: React.ChangeEvent<HTMLInputElement>) => {
       setText(e.target.value);
 
@@ -324,7 +371,7 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
 
   const MESSAGE_MAX = 2000;
   const isOverLimit = text.length > MESSAGE_MAX;
-  const isSendDisabled = isSending || !text.trim() || isOverLimit;
+  const isSendDisabled = isSending || isOverLimit || (!text.trim() && !imageFile);
 
   // SEND MESSAGE
   const sendMessage = async () => {
@@ -334,10 +381,22 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
     setIsSending(true);
 
     try {
+      const formData = new FormData();
+      formData.append("conversationId", conversationId);
+      if (text.trim()) {
+        formData.append("content", text.trim());
+      }
+      if (imageFile) {
+        formData.append("image", imageFile);
+      }
+
       const { data } = await axios.post(
         `${BACKEND_URL}/api/messages`,
-        { conversationId, content: text },
-        { withCredentials: true }
+        formData,
+        {
+          withCredentials: true,
+          headers: { "Content-Type": "multipart/form-data" }
+        }
       );
 
       setMessages((prev) => {
@@ -346,6 +405,7 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
       });
 
       setText("");
+      handleRemoveImage();
       socket.emit("stop_typing", { conversationId, receiverId });
       isTypingRef.current = false;
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -554,7 +614,19 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
                           This message was deleted
                         </span>
                       ) : (
-                        m.content
+                        <>
+                          {m.image && (
+                            <span className="block mb-2 max-w-[280px] sm:max-w-[320px] overflow-hidden rounded-lg border border-accent/20 cursor-pointer hover:opacity-90">
+                              <img
+                                src={m.image}
+                                alt="Shared media"
+                                className="w-full max-h-[300px] object-cover rounded-lg"
+                                onClick={() => window.open(m.image, "_blank")}
+                              />
+                            </span>
+                          )}
+                          {m.content && <span>{m.content}</span>}
+                        </>
                       )}
 
                       <span className="ml-2 text-[10px] opacity-70 relative top-0.5 inline-flex items-center gap-0.5">
@@ -591,6 +663,24 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
       </div>
 
       <div className="flex flex-col">
+        {imagePreview && (
+          <div className="relative ml-4 md:ml-6 mb-2 w-20 h-20 rounded-xl overflow-hidden border border-surface-border bg-card/88 group">
+            <img
+              src={imagePreview}
+              alt="Attachment preview"
+              className="w-full h-full object-cover"
+            />
+            <button
+              type="button"
+              onClick={handleRemoveImage}
+              className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full p-0.5 hover:bg-red-600 transition-colors cursor-pointer"
+              title="Remove image"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         {text.length > 0 && (
           <div className={`px-5 pt-1 text-right text-xs ${isOverLimit ? "text-red-500 font-medium" : "text-muted-foreground"}`}>
             {text.length} / {MESSAGE_MAX}
@@ -599,6 +689,22 @@ export default function ChatPage({ params }: { params: Promise<Params> }) {
         )}
 
         <div className="chat-composer">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+          <button
+            type="button"
+            disabled={isSending}
+            onClick={() => fileInputRef.current?.click()}
+            className="p-3 rounded-2xl hover:bg-accent/70 text-foreground/70 transition-colors flex items-center justify-center shrink-0 border border-surface-border bg-card/88 cursor-pointer"
+            title="Attach image"
+          >
+            <ImageIcon size={20} />
+          </button>
 
           <input
             value={text}

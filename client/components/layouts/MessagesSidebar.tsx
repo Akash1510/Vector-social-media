@@ -7,6 +7,7 @@ import axios from "axios";
 import { useAppContext } from "@/context/AppContext";
 import { useRouter } from "next/navigation";
 import InlineLoader from "../loaders/InlineLoader";
+import SearchBar from "@/components/SearchBar";
 
 type SuggestedUser = {
     _id: string;
@@ -30,6 +31,7 @@ export default function MessagesSidebar() {
     const [query, setQuery] = useState("");
     const [results, setResults] = useState<User[]>([]);
     const [searching, setSearching] = useState(false);
+    const [isDebouncing, setIsDebouncing] = useState(false);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const { userData } = useAppContext();
     const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL!;
@@ -51,11 +53,16 @@ export default function MessagesSidebar() {
     }, [BACKEND_URL]);
 
     useEffect(() => {
+        if (!query.trim()) {
+            setResults([]);
+            setIsDebouncing(false);
+            return;
+        }
+
+        setIsDebouncing(true);
+
         const delay = setTimeout(async () => {
-            if (!query.trim()) {
-                setResults([]);
-                return;
-            }
+            setIsDebouncing(false);
             try {
                 setSearching(true);
                 const res = await axios.get(`${BACKEND_URL}/api/users/search?query=${query}`, { withCredentials: true });
@@ -125,22 +132,20 @@ export default function MessagesSidebar() {
                     <UserPlus className="h-5 text-blue-500" />
                     Suggestions
                 </p>
-                <div className="mt-4 flex items-center gap-2 bg-white/10 px-3 py-2 rounded-md">
-                    <Search className="h-4 w-4 text-gray-400" />
-                    <input
-                        type="text"
-                        placeholder="Search users..."
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        className="bg-transparent outline-none text-sm text-white placeholder-gray-400 w-full"
-                    />
-                </div>
+                <SearchBar
+                    placeholder="Search users..."
+                    value={query}
+                    onChange={setQuery}
+                    className="mt-4 flex items-center gap-2 bg-white/10 px-3 py-2 rounded-md"
+                    inputClassName="outline-none text-sm text-white placeholder-gray-400 w-full"
+                    iconClassName="h-4 w-4 text-gray-400"
+                />
 
                 <div className="mt-5 flex flex-col gap-2 w-fit min-h-[75vh] max-h-[60vh] overflow-y-auto hide-scrollbar pr-1">
                     {loading ? (
                         <InlineLoader text="Loading users..." />
                     ) : query.trim() ? (
-                        searching ? (
+                        isDebouncing || searching ? (
                             <p className="text-sm opacity-50">Searching...</p>
                         ) : results.length === 0 ? (
                             <p className="text-sm opacity-50">No users found.</p>

@@ -89,7 +89,7 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false, // Default is Public
     },
-    
+
     resetToken: String,
     resetTokenExpiry: Date,
 

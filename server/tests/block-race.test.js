@@ -116,7 +116,7 @@ describe("Block System Integrity", () => {
       await User.updateOne({ _id: bob._id }, { $addToSet: { blockedUsers: alice._id } });
 
       await request(app)
-        .post(`/api/posts/like/${post._id}`)
+        .post(`/api/posts/${post._id}/like`)
         .set("Cookie", cookieFor(alice));
 
       const updatedPost = await Post.findById(post._id);
@@ -136,7 +136,7 @@ describe("Block System Integrity", () => {
       await User.updateOne({ _id: alice._id }, { $addToSet: { blockedUsers: bob._id } });
 
       const res = await request(app)
-        .post(`/api/posts/like/${post._id}`)
+        .post(`/api/posts/${post._id}/like`)
         .set("Cookie", cookieFor(alice));
 
       expect(res.status).toBe(403);
