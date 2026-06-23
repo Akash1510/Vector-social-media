@@ -739,7 +739,11 @@ export const getSuggestedUsers = asyncHandler(async (req, res) => {
 });
 
 export const searchUsers = asyncHandler(async (req, res) => {
-        const { query, cursor } = req.query;
+        const {
+            query,
+            cursor,
+            sortBy
+        } = req.query;
 
         if (!query) {
             return res.json({
@@ -763,15 +767,51 @@ export const searchUsers = asyncHandler(async (req, res) => {
             ? { _id: { $lt: new mongoose.Types.ObjectId(cursor) } }
             : {};
 
+            let searchFilter = {
+    _id: { $nin: excludeIds }
+};
+
+if (query) {
+    searchFilter.$or = [
+        {
+            username: {
+                $regex: query,
+                $options: "i"
+            }
+        },
+        {
+            name: {
+                $regex: query,
+                $options: "i"
+            }
+        },
+        {
+            bio: {
+                $regex: query,
+                $options: "i"
+            }
+        }
+    ];
+}
+
+let sortOption = { _id: -1 };
+
+if (sortBy === "followers") {
+    sortOption = { followersCount: -1 };
+}
+
+if (sortBy === "activity") {
+    sortOption = { createdAt: -1 };
+}
+
         const users = await User.find({
-            $text: { $search: query },
-            _id: { $nin: excludeIds },
-            ...cursorFilter,
-        })
-            .sort({ _id: -1 })
-            .limit(limit + 1)
-            .select("name username avatar")
-            .lean();
+    ...searchFilter,
+    ...cursorFilter,
+})
+.sort(sortOption)
+.limit(limit + 1)
+.select("name username avatar followersCount createdAt")
+.lean();
 
         const hasNextPage = users.length > limit;
         const pageUsers = hasNextPage ? users.slice(0, limit) : users;
@@ -1137,3 +1177,46 @@ export const unblockUser = asyncHandler(async (req, res) => {
         });
 });
 
+export const getUserAnalytics = asyncHandler(async (req, res) => {
+    const userId = req.user.id;
+
+    const user = await User.findById(userId);
+
+    const posts = await Post.find({ author: userId });
+
+    const totalPosts = posts.length;
+
+    const totalLikes = posts.reduce(
+        (sum, post) => sum + (post.likes?.length || 0),
+        0
+    );
+
+    const totalComments = posts.reduce(
+        (sum, post) => sum + (post.commentsCount || 0),
+        0
+    );
+
+    const totalShares = posts.reduce(
+        (sum, post) => sum + (post.sharesCount || 0),
+        0
+    );
+
+    const mostPopularPost = posts.sort(
+        (a, b) =>
+            (b.likes?.length || 0) -
+            (a.likes?.length || 0)
+    )[0];
+
+    res.status(200).json({
+        success: true,
+        analytics: {
+            totalPosts,
+            totalLikes,
+            totalComments,
+            totalShares,
+            followers: user.followersCount,
+            following: user.followingCount,
+            mostPopularPost,
+        },
+    });
+});
