@@ -1,19 +1,22 @@
 import express from "express";
-import { 
-    createPost, 
-    deletePost, 
-    getPosts, 
-    getPostsByUser, 
-    getSinglePost, 
+import {
+    createPost,
+    deletePost,
+    getPosts,
+    getPostsByUser,
+    getSinglePost,
     getTopPostsOfWeek,
     getTopPostsOfMonth,
     likePost,
     unlikePost,
     incrementShare,
-    updatePost,toggleBookmark,
+    updatePost,
+    toggleBookmark,
     getBookmarks,
     searchPosts,
-    togglePinPost
+    togglePinPost,
+    votePoll,
+    getPollResults
 } from "../controllers/post.controller.js";
 import authMiddleware from "../middlewares/auth.middleware.js";
 import { uploadImage } from "../middlewares/upload.middleware.js";
@@ -35,6 +38,8 @@ postRouter.post("/:id/unlike", authMiddleware, socialActionLimiter, unlikePost);
 postRouter.put("/:id/share", authMiddleware, socialActionLimiter, incrementShare);
 postRouter.put("/:id", authMiddleware, postWriteLimiter, uploadImage("image"), updatePost);
 postRouter.delete("/:id", authMiddleware, postWriteLimiter, deletePost);
+postRouter.post("/:id/vote",authMiddleware,socialActionLimiter,votePoll);
+postRouter.get("/:id/poll-results",optionalAuth,getPollResults);
 postRouter.post("/:id/bookmark", authMiddleware, socialActionLimiter, toggleBookmark);
 postRouter.post("/:id/pin", authMiddleware, socialActionLimiter, togglePinPost);
 
