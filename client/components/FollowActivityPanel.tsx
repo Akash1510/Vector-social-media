@@ -9,7 +9,6 @@ import { UserSummary } from "@/lib/types";
 import { UserMinus, Check, X, ShieldAlert } from "lucide-react";
 
 export default function FollowActivityPanel({
-  pendingFollowCount,
   setPendingFollowCount,
 }: {
   pendingFollowCount: number;

@@ -38,6 +38,8 @@ export type UserSummary = {
   mutualFollowersCount?: number;
   isBlockedByCurrentUser?: boolean;
   isBlockedByTarget?: boolean;
+  role?: string;
+  isBanned?: boolean;
 };
 
 export type Post = {
@@ -62,6 +64,8 @@ export type Comment = {
   content: string;
   createdAt: string;
   parentCommentId?: string;
+  isEdited?: boolean;
+  editedAt?: string | Date;
   replies?: Comment[];
 };
 

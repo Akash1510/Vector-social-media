@@ -66,6 +66,16 @@ const postSchema = new mongoose.Schema({
     default: 0,
   },
 
+  viewCount: {
+  type: Number,
+  default: 0,
+},
+
+viewedBy: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User"
+}],
+
   sharedBy: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: "User"
@@ -81,6 +91,39 @@ const postSchema = new mongoose.Schema({
     default: false,
   },
 
+  poll: {
+  question: {
+    type: String,
+    trim: true,
+  },
+
+  options: [
+    {
+      text: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+
+      voters: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        }
+      ]
+    }
+  ],
+
+  expiresAt: {
+    type: Date,
+  },
+
+  isActive: {
+    type: Boolean,
+    default: true,
+  }
+},
+
 }, { timestamps: true });
 
 // Text index for searching posts by content and intent
@@ -92,8 +135,24 @@ postSchema.index({ author: 1, _id: -1 });
 postSchema.index({ author: 1, _id: -1 });
 
 postSchema.pre("save", function () {
+
   if (typeof this.content === "string") {
     this.content = this.content.trim();
+  }
+
+  if (this.poll?.options?.length > 0) {
+
+    if (this.poll.options.length < 2) {
+      throw new Error(
+        "Poll must contain at least 2 options"
+      );
+    }
+
+    if (this.poll.options.length > 6) {
+      throw new Error(
+        "Maximum 6 poll options allowed"
+      );
+    }
   }
 });
 

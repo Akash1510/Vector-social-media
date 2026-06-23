@@ -164,6 +164,8 @@ export const getMe = asyncHandler(async (req, res) => {
                 isPrivate: user.isPrivate,
                 followRequests: followRequests.map(f => f.follower.toString()),
                 blockedUsers: (user.blockedUsers || []).map(id => id.toString()),
+                role: user.role,
+                isBanned: user.isBanned,
             },
         });
 });

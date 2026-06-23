@@ -7,7 +7,6 @@ import {
   Flame,
   Heart,
   LayoutGrid,
-  Search,
   TrendingUp,
   UserPlus,
   UserCheck,

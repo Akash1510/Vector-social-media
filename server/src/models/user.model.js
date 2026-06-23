@@ -90,6 +90,17 @@ const userSchema = new mongoose.Schema(
       default: false, // Default is Public
     },
 
+    role: {
+      type: String,
+      enum: ["user", "admin"],
+      default: "user",
+    },
+
+    isBanned: {
+      type: Boolean,
+      default: false,
+    },
+
     resetToken: String,
     resetTokenExpiry: Date,
 
