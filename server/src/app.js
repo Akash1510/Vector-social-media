@@ -14,6 +14,7 @@ import conversationRouter from "./routes/conversation.routes.js";
 import reportRouter from "./routes/report.routes.js";
 import contactRouter from "./routes/contact.routes.js";
 import reviewRouter from "./routes/review.routes.js";
+import adminRouter from "./routes/admin.routes.js";
 import errorHandler from "./middlewares/error.middleware.js";
 import { sanitizeAllBodyFields } from "./middlewares/sanitize.middleware.js";
 const app = express();
@@ -149,6 +150,7 @@ app.use("/api/conversation", conversationRouter);
 app.use("/api/reports", reportRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/reviews", reviewRouter);
+app.use("/api/admin", adminRouter);
 
 app.use(errorHandler);
 

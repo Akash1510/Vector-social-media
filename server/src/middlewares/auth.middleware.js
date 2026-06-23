@@ -58,6 +58,13 @@ const authMiddleware = async (req, res, next) => {
             });
         }
 
+        if (user.isBanned) {
+            return res.status(403).json({
+                success: false,
+                message: "Your account has been banned.",
+            });
+        }
+
         // Verify token version (handles password reset token invalidation)
         if ((decoded.version || 0) !== (user.tokenVersion || 0)) {
             return res.status(401).json({
