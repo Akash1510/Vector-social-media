@@ -7,7 +7,7 @@ import { useAppContext } from "@/context/AppContext";
 import { useRouter } from "next/navigation";
 import { toast } from "react-toastify";
 import { getErrorMessage } from "@/lib/error";
-import { Flag, MoreHorizontal, Trash2, AlertCircle } from "lucide-react";
+import { Flag, MoreHorizontal, Trash2, AlertCircle, Edit2 } from "lucide-react";
 import DeleteWarning from "@/components/modals/DeleteWarning";
 import InlineLoader from "../loaders/InlineLoader";
 import type { Comment } from "@/lib/types";
@@ -34,6 +34,11 @@ export default function CommentsSection({ postId, postAuthorId }: { postId: stri
     const [cursor, setCursor] = useState<string | null>(null);
     const [hasMore, setHasMore] = useState(true);
     const [replyingTo, setReplyingTo] = useState<Comment | null>(null);
+    
+    const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+    const [editContent, setEditContent] = useState("");
+    const [editLoading, setEditLoading] = useState(false);
+
     const LIMIT = 20;
 
     function timeAgo(dateString: string) {
@@ -155,6 +160,34 @@ export default function CommentsSection({ postId, postAuthorId }: { postId: stri
         }
     };
 
+    const handleEditSubmit = async (commentId: string) => {
+        try {
+            setEditLoading(true);
+            const { data } = await axios.put(`${BACKEND_URL}/api/comments/${commentId}`, { content: editContent }, { withCredentials: true });
+            
+            setComments(prev => prev.map(c => {
+                if (c._id === commentId) return data.comment;
+                if (c.replies) {
+                    const replyIndex = c.replies.findIndex(r => r._id === commentId);
+                    if (replyIndex !== -1) {
+                        const newReplies = [...c.replies];
+                        newReplies[replyIndex] = data.comment;
+                        return { ...c, replies: newReplies };
+                    }
+                }
+                return c;
+            }));
+            
+            setEditingCommentId(null);
+            setEditContent("");
+            toast.success("Comment updated");
+        } catch (error: unknown) {
+            toast.error(getErrorMessage(error, "Failed to edit comment"));
+        } finally {
+            setEditLoading(false);
+        }
+    };
+
     const handleReportComment = async (reason: ReportReason, details?: string) => {
         if (!selectedComment?._id) return;
         await reportComment(selectedComment._id, reason, details);
@@ -233,6 +266,21 @@ export default function CommentsSection({ postId, postAuthorId }: { postId: stri
                                         </button>
                                     )}
 
+                                    {isCommentAuthor && (
+                                        <button
+                                            type="button"
+                                            className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-black/3 dark:hover:bg-white/5"
+                                            onClick={() => {
+                                                setEditingCommentId(c._id);
+                                                setEditContent(c.content);
+                                                setMenuOpenId(null);
+                                            }}
+                                        >
+                                            <Edit2 size={14} />
+                                            Edit comment
+                                        </button>
+                                    )}
+
                                     {canDelete && (
                                         <button
                                             type="button"
@@ -252,13 +300,45 @@ export default function CommentsSection({ postId, postAuthorId }: { postId: stri
                         </div>
                     </div>
 
-                    <div className="surface-text-muted text-[0.9rem] whitespace-pre-wrap wrap-break-word">
-                        <Linkify text={c?.content || ""} />
-                    </div>
+                    {editingCommentId === c._id ? (
+                        <div className="mt-2 flex flex-col gap-2">
+                            <textarea
+                                value={editContent}
+                                onChange={(e) => setEditContent(e.target.value)}
+                                className="form-textarea w-full text-[0.9rem] min-h-[60px]"
+                                autoFocus
+                            />
+                            <div className="flex items-center gap-2 justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setEditingCommentId(null);
+                                        setEditContent("");
+                                    }}
+                                    className="text-xs font-semibold text-gray-500 hover:text-foreground cursor-pointer"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleEditSubmit(c._id)}
+                                    disabled={editLoading || !editContent.trim()}
+                                    className="text-xs font-semibold px-3 py-1 bg-blue-500 text-white rounded-md hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {editLoading ? "Saving..." : "Save"}
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="surface-text-muted text-[0.9rem] whitespace-pre-wrap wrap-break-word">
+                            <Linkify text={c?.content || ""} />
+                        </div>
+                    )}
 
                     <div className="flex items-center gap-4 mt-1">
-                        <p className="text-[0.75rem] text-gray-500">
+                        <p className="text-[0.75rem] text-gray-500 flex items-center gap-1">
                             {timeAgo(c.createdAt)}
+                            {c.isEdited && <span className="opacity-60 font-medium">(edited)</span>}
                         </p>
                         {userData && (
                             <button

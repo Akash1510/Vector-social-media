@@ -64,6 +64,8 @@ export type Comment = {
   content: string;
   createdAt: string;
   parentCommentId?: string;
+  isEdited?: boolean;
+  editedAt?: string | Date;
   replies?: Comment[];
 };
 

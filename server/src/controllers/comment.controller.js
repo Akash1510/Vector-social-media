@@ -244,3 +244,43 @@ export const deleteComment = asyncHandler(async (req, res) => {
 
     res.json({ success: true });
 });
+
+export const updateComment = asyncHandler(async (req, res) => {
+    const { commentId } = req.params;
+    const { content } = req.body;
+
+    if (!content || !content.trim()) {
+        return res.status(400).json({ message: "Content is required" });
+    }
+
+    if (content.length > 500) {
+        return res.status(400).json({ message: "Content must not exceed 500 characters" });
+    }
+
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+        return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const currentUserId = req.user._id?.toString() || req.user.id?.toString();
+
+    if (comment.author.toString() !== currentUserId) {
+        return res.status(403).json({ message: "Not allowed to edit this comment" });
+    }
+
+    comment.content = content.trim();
+    comment.isEdited = true;
+    comment.editedAt = new Date();
+
+    await comment.save();
+
+    const populatedComment = await Comment.findById(comment._id)
+        .populate("author", "name username avatar")
+        .populate({
+            path: "parentCommentId",
+            select: "author content",
+            populate: { path: "author", select: "username" }
+        });
+
+    res.json({ success: true, comment: populatedComment });
+});
